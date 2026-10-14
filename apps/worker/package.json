@@ -1,0 +1,1 @@
+{"name":"@guardian/worker","private":true,"type":"module","scripts":{"start":"node --env-file=../../.env --import tsx src/index.ts"},"dependencies":{"@guardian/db":"workspace:*","@guardian/engine":"workspace:*","@guardian/policy":"workspace:*","drizzle-orm":"^0.45.4","pino":"^10.4.0","tsx":"^4.23.15","viem":"^2.57.5"}}
