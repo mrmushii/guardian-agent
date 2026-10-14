@@ -1,0 +1,183 @@
+import { sql } from "drizzle-orm";
+import {
+  bigint, bigserial, boolean, date, index, integer, jsonb, numeric, pgTable, text, timestamp, uniqueIndex, uuid,
+} from "drizzle-orm/pg-core";
+
+// Token amounts are lossless NUMERIC(78,0) strings; USD is integer cents. (architecture §9)
+const amount = (name: string) => numeric(name, { precision: 78, scale: 0 });
+const created = () => timestamp("created_at", { withTimezone: true }).notNull().defaultNow();
+
+export const users = pgTable("users", {
+  id: uuid("id").primaryKey().defaultRandom(),
+  /** Verified by wallet-signature login (lowercase address). */
+  walletAddress: text("wallet_address").notNull().unique(),
+  createdAt: created(),
+});
+
+export const authNonces = pgTable("auth_nonces", {
+  nonce: text("nonce").primaryKey(),
+  walletAddress: text("wallet_address").notNull(),
+  expiresAt: timestamp("expires_at", { withTimezone: true }).notNull(),
+  usedAt: timestamp("used_at", { withTimezone: true }),
+});
+
+export const smartAccounts = pgTable("smart_accounts", {
+  id: uuid("id").primaryKey().defaultRandom(),
+  userId: uuid("user_id").references(() => users.id),
+  chainId: integer("chain_id").notNull(),
+  address: text("address").notNull(),
+  ownerAddress: text("owner_address").notNull(),
+  kernelVersion: text("kernel_version").notNull(),
+  entryPoint: text("entry_point").notNull(),
+  /** Autonomous monitoring switch; false pauses new autonomous actions. */
+  monitoringEnabled: boolean("monitoring_enabled").notNull().default(true),
+  pausedReason: text("paused_reason"),
+  createdAt: created(),
+}, (t) => [uniqueIndex("smart_accounts_chain_address").on(t.chainId, t.address)]);
+
+export const policies = pgTable("policies", {
+  id: uuid("id").primaryKey().defaultRandom(),
+  accountId: uuid("account_id").notNull().references(() => smartAccounts.id),
+  version: integer("version").notNull(),
+  /** Owner-approved HumanPolicy JSON. */
+  policy: jsonb("policy").notNull(),
+  active: boolean("active").notNull().default(false),
+  createdAt: created(),
+}, (t) => [
+  uniqueIndex("policies_account_version").on(t.accountId, t.version),
+  uniqueIndex("policies_one_active").on(t.accountId).where(sql`${t.active}`),
+]);
+
+export const agentSessions = pgTable("agent_sessions", {
+  id: uuid("id").primaryKey().defaultRandom(),
+  accountId: uuid("account_id").notNull().references(() => smartAccounts.id),
+  policyId: uuid("policy_id").notNull().references(() => policies.id),
+  permissionId: text("permission_id").notNull(),
+  signerAddress: text("signer_address").notNull(),
+  /** AES-256-GCM blob (iv|tag|ciphertext, base64). Never plaintext. */
+  encryptedKey: text("encrypted_key").notNull(),
+  keyVersion: integer("key_version").notNull(),
+  validAfter: timestamp("valid_after", { withTimezone: true }).notNull(),
+  validUntil: timestamp("valid_until", { withTimezone: true }).notNull(),
+  /** PENDING_AUTHORIZATION → ACTIVE → REVOKED | EXPIRED | REAUTH_REQUIRED */
+  status: text("status").notNull(),
+  authorizeUserOpHash: text("authorize_user_op_hash"),
+  revokeUserOpHash: text("revoke_user_op_hash"),
+  createdAt: created(),
+  revokedAt: timestamp("revoked_at", { withTimezone: true }),
+}, (t) => [uniqueIndex("agent_sessions_one_active").on(t.accountId).where(sql`${t.status} in ('PENDING_AUTHORIZATION','ACTIVE','REAUTH_REQUIRED')`)]);
+
+export const policyCompilations = pgTable("policy_compilations", {
+  id: uuid("id").primaryKey().defaultRandom(),
+  policyId: uuid("policy_id").notNull().references(() => policies.id),
+  sessionId: uuid("session_id").notNull().references(() => agentSessions.id).unique(),
+  authPriceAnswer: amount("auth_price_answer").notNull(),
+  authPriceDecimals: integer("auth_price_decimals").notNull(),
+  authPriceSource: text("auth_price_source").notNull(),
+  authPriceTimestamp: timestamp("auth_price_timestamp", { withTimezone: true }).notNull(),
+  bufferBps: integer("buffer_bps").notNull(),
+  maxAmountInWei: amount("max_amount_in_wei").notNull(),
+  maxOps: integer("max_ops").notNull(),
+  allowanceWei: amount("allowance_wei").notNull(),
+  gasAllowanceWei: amount("gas_allowance_wei").notNull(),
+  /** Target, selector, assets, recipient, fee tier, paymaster, policy contract addresses. */
+  restrictions: jsonb("restrictions").notNull(),
+  createdAt: created(),
+});
+
+/** Non-terminal states hold the per-account lock (plan §12: one active rebalance). */
+export const ACTIVE_ACTION_STATES = [
+  "TRIGGERED", "PLANNING", "SIMULATING", "PENDING_APPROVAL", "REVALIDATING", "MASTER_SIGNING", "SUBMITTING", "PENDING",
+] as const;
+
+export const agentActions = pgTable("agent_actions", {
+  id: uuid("id").primaryKey().defaultRandom(),
+  accountId: uuid("account_id").notNull().references(() => smartAccounts.id),
+  policyId: uuid("policy_id").notNull().references(() => policies.id),
+  sessionId: uuid("session_id").references(() => agentSessions.id),
+  /** Idempotency key, e.g. "block:<n>" — duplicate triggers are ignored. */
+  triggerKey: text("trigger_key").notNull(),
+  trigger: jsonb("trigger").notNull(),
+  triggerBlock: bigint("trigger_block", { mode: "bigint" }),
+  state: text("state").notNull(),
+  decision: jsonb("decision"),
+  tier: text("tier"),
+  reasons: jsonb("reasons"),
+  /** Deterministic plan: amounts, quote, minOut, risk (bigints as strings). */
+  plan: jsonb("plan"),
+  requestedUsdCents: bigint("requested_usd_cents", { mode: "bigint" }),
+  /** Budget reservation; released (0) on definitive failure or rejection. */
+  reservedUsdCents: bigint("reserved_usd_cents", { mode: "bigint" }).notNull().default(sql`0`),
+  budgetDay: date("budget_day"),
+  cooldownUntil: timestamp("cooldown_until", { withTimezone: true }),
+  error: text("error"),
+  createdAt: created(),
+  updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+}, (t) => [
+  uniqueIndex("agent_actions_trigger").on(t.accountId, t.triggerKey),
+  uniqueIndex("agent_actions_one_active").on(t.accountId).where(sql`${t.state} in ('TRIGGERED','PLANNING','SIMULATING','PENDING_APPROVAL','REVALIDATING','MASTER_SIGNING','SUBMITTING','PENDING')`),
+  index("agent_actions_budget").on(t.accountId, t.budgetDay),
+]);
+
+export const userOperations = pgTable("user_operations", {
+  id: uuid("id").primaryKey().defaultRandom(),
+  actionId: uuid("action_id").references(() => agentActions.id),
+  accountId: uuid("account_id").notNull().references(() => smartAccounts.id),
+  /** AGENT_SESSION | MASTER */
+  authority: text("authority").notNull(),
+  purpose: text("purpose").notNull(),
+  nonce: amount("nonce"),
+  userOpHash: text("user_op_hash").unique(),
+  sessionId: uuid("session_id").references(() => agentSessions.id),
+  /** Exact prepared UserOperation (bigints as strings). Master ops: what the owner is asked to sign. */
+  payload: jsonb("payload"),
+  /** INTENT → AWAITING_SIGNATURE → SUBMITTED → INCLUDED | REJECTED | UNKNOWN | ABANDONED */
+  state: text("state").notNull(),
+  bundlerResult: jsonb("bundler_result"),
+  createdAt: created(),
+  updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+});
+
+export const transactions = pgTable("transactions", {
+  id: uuid("id").primaryKey().defaultRandom(),
+  userOperationId: uuid("user_operation_id").notNull().references(() => userOperations.id).unique(),
+  chainId: integer("chain_id").notNull(),
+  transactionHash: text("transaction_hash").notNull(),
+  blockNumber: bigint("block_number", { mode: "bigint" }).notNull(),
+  bundler: text("bundler"),
+  /** Outer tx status and inner UserOperationEvent.success are recorded separately. */
+  outerSuccess: boolean("outer_success").notNull(),
+  userOpSuccess: boolean("user_op_success").notNull(),
+  effects: jsonb("effects"),
+  createdAt: created(),
+});
+
+export const securityEvents = pgTable("security_events", {
+  id: uuid("id").primaryKey().defaultRandom(),
+  accountId: uuid("account_id").references(() => smartAccounts.id),
+  kind: text("kind").notNull(),
+  reason: text("reason").notNull(),
+  /** APPLICATION | BUNDLER | ONCHAIN */
+  source: text("source").notNull(),
+  evidence: jsonb("evidence"),
+  createdAt: created(),
+});
+
+export const auditEvents = pgTable("audit_events", {
+  /** Monotonic cursor for dashboard reload-after-reconnect. */
+  id: bigserial("id", { mode: "bigint" }).primaryKey(),
+  accountId: uuid("account_id").references(() => smartAccounts.id),
+  actionId: uuid("action_id").references(() => agentActions.id),
+  type: text("type").notNull(),
+  /** INFO | SUCCESS | WARNING | FAILURE */
+  level: text("level").notNull(),
+  message: text("message").notNull(),
+  data: jsonb("data"),
+  createdAt: created(),
+}, (t) => [index("audit_events_account").on(t.accountId, t.id)]);
+
+export const watcherCheckpoints = pgTable("watcher_checkpoints", {
+  accountId: uuid("account_id").primaryKey().references(() => smartAccounts.id),
+  lastBlock: bigint("last_block", { mode: "bigint" }).notNull(),
+  heartbeatAt: timestamp("heartbeat_at", { withTimezone: true }).notNull().defaultNow(),
+});
