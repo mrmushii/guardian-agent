@@ -1,0 +1,20 @@
+{
+  "generatedAt": "2026-10-14T16:34:39.612Z",
+  "id": "E8",
+  "network": "Base Sepolia (84532)",
+  "sessionSigner": "0x0E41E69cdefFC1f771DF066AD242c7DdFF416607",
+  "permissionId": "0x32588915",
+  "call": {
+    "amountInWei": "100000000000000",
+    "amountOutMinimum": "1000000000000",
+    "note": "permitted target/selector/assets/recipient/amount; minOut unconstrained on-chain"
+  },
+  "userOpHash": "0x509287eddc5aea08255b8045de157685e5371ed4d317e6a139949f194fcfb227",
+  "transactionHash": "0x84e27e2a5e9552620bec2b9658373524bdb0464a4854ce64b3e12c9096eae6e4",
+  "block": "48113696",
+  "outerTransactionStatus": "success",
+  "userOperationSuccess": false,
+  "revertReason": "Too little received",
+  "classification": "EXECUTION_FAILED (authorization passed)",
+  "explorer": "https://sepolia.basescan.org/tx/0x84e27e2a5e9552620bec2b9658373524bdb0464a4854ce64b3e12c9096eae6e4"
+}
