@@ -1,0 +1,40 @@
+{
+  "name": "guardian-agent",
+  "private": true,
+  "type": "module",
+  "packageManager": "pnpm@12.11.2",
+  "scripts": {
+    "test": "vitest run",
+    "typecheck": "tsc --noEmit -p .",
+    "db:generate": "drizzle-kit generate",
+    "db:migrate": "node --env-file=.env ./node_modules/drizzle-kit/bin.cjs migrate",
+    "guardian": "node --env-file=.env --import tsx scripts/guardian.ts",
+    "worker": "node --env-file=.env --import tsx apps/worker/src/index.ts"
+  },
+  "devDependencies": {
+    "@guardian/account": "workspace:*",
+    "@guardian/agent": "workspace:*",
+    "@guardian/chain": "workspace:*",
+    "@guardian/db": "workspace:*",
+    "@guardian/dex": "workspace:*",
+    "@guardian/engine": "workspace:*",
+    "@guardian/oracle": "workspace:*",
+    "@guardian/policy": "workspace:*",
+    "@guardian/portfolio": "workspace:*",
+    "@guardian/risk": "workspace:*",
+    "@guardian/simulation": "workspace:*",
+    "@types/node": "^26.6.5",
+    "@zerodev/ecdsa-validator": "^5.4.9",
+    "@zerodev/permissions": "^5.6.3",
+    "@zerodev/sdk": "^5.5.10",
+    "drizzle-kit": "^0.31.11",
+    "drizzle-orm": "^0.45.4",
+    "permissionless": "^0.4.1",
+    "pg": "^8.23.1",
+    "tslib": "^2.8.1",
+    "tsx": "^4.23.15",
+    "typescript": "^7.0.2",
+    "viem": "^2.57.5",
+    "vitest": "^5.0.4"
+  }
+}
