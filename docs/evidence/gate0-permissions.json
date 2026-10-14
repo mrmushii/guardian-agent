@@ -1,0 +1,212 @@
+{
+  "generatedAt": "2026-10-14T14:44:24.478Z",
+  "network": "Base Sepolia (84532)",
+  "method": "eth_simulateV1 → EntryPoint.handleOps (no broadcast)",
+  "entryPoint": "0x0000000071727De22E5E9d8BAf0edAc6f37da032",
+  "kernelVersion": "0.3.3",
+  "callPolicy": "0.0.5",
+  "masterOwner": "0x1FeE37df0111D22616fBA6d51bF64038CF05d290",
+  "smartAccount": "0x11Bc46A51a49d1424c6474fb318C904E451654b7",
+  "sessionSigner": "0x248d4A972BF121dbB511F3Ec50E156DF69e80f4f",
+  "permissionId": "0xca89c346",
+  "router": "0x94cC0AaC535CCDB3C01d6787D6413C739ae12bc4",
+  "feeTier": 3000,
+  "compiled": {
+    "authPrice": "241840034020",
+    "bufferBps": 1500,
+    "maxAmountInWei": "3595621464886958",
+    "maxOps": 2,
+    "allowanceWei": "7191242929773916",
+    "validAfter": 1791988989,
+    "validUntil": 1792075449,
+    "gasAllowanceWei": "10000000000000000"
+  },
+  "simulationStateOverrides": "account: 1 ETH; WETH balance 1 WETH; WETH allowance(account→router) = compiled allowance",
+  "cases": [
+    {
+      "name": "Allowed swap at compiled cap (enable mode)",
+      "expect": "EXECUTED_SUCCESS",
+      "outcome": {
+        "result": "EXECUTED_SUCCESS",
+        "detail": "UserOperationEvent success=true",
+        "usdcReceived": "17.919677"
+      },
+      "pass": true
+    },
+    {
+      "name": "Wrong target: WETH.transfer to attacker",
+      "expect": "VALIDATION_REJECTED",
+      "outcome": {
+        "result": "VALIDATION_REJECTED",
+        "detail": "FailedOpWithRevert(0, AA23 reverted, 0x007e472e)"
+      },
+      "pass": true
+    },
+    {
+      "name": "Wrong selector: exactOutputSingle",
+      "expect": "VALIDATION_REJECTED",
+      "outcome": {
+        "result": "VALIDATION_REJECTED",
+        "detail": "FailedOpWithRevert(0, AA23 reverted, 0x007e472e)"
+      },
+      "pass": true
+    },
+    {
+      "name": "Wrong tokenIn (USDC)",
+      "expect": "VALIDATION_REJECTED",
+      "outcome": {
+        "result": "VALIDATION_REJECTED",
+        "detail": "FailedOpWithRevert(0, AA23 reverted, 0x59d52e40)"
+      },
+      "pass": true
+    },
+    {
+      "name": "Wrong tokenOut (attacker token)",
+      "expect": "VALIDATION_REJECTED",
+      "outcome": {
+        "result": "VALIDATION_REJECTED",
+        "detail": "FailedOpWithRevert(0, AA23 reverted, 0x59d52e40)"
+      },
+      "pass": true
+    },
+    {
+      "name": "Wrong fee tier (500)",
+      "expect": "VALIDATION_REJECTED",
+      "outcome": {
+        "result": "VALIDATION_REJECTED",
+        "detail": "FailedOpWithRevert(0, AA23 reverted, 0x59d52e40)"
+      },
+      "pass": true
+    },
+    {
+      "name": "Wrong recipient (attacker)",
+      "expect": "VALIDATION_REJECTED",
+      "outcome": {
+        "result": "VALIDATION_REJECTED",
+        "detail": "FailedOpWithRevert(0, AA23 reverted, 0x59d52e40)"
+      },
+      "pass": true
+    },
+    {
+      "name": "amountIn = cap + 1 wei",
+      "expect": "VALIDATION_REJECTED",
+      "outcome": {
+        "result": "VALIDATION_REJECTED",
+        "detail": "FailedOpWithRevert(0, AA23 reverted, 0x59d52e40)"
+      },
+      "pass": true
+    },
+    {
+      "name": "Non-zero sqrtPriceLimitX96",
+      "expect": "VALIDATION_REJECTED",
+      "outcome": {
+        "result": "VALIDATION_REJECTED",
+        "detail": "FailedOpWithRevert(0, AA23 reverted, 0x59d52e40)"
+      },
+      "pass": true
+    },
+    {
+      "name": "Batch: allowed swap + attacker transfer",
+      "expect": "VALIDATION_REJECTED",
+      "outcome": {
+        "result": "VALIDATION_REJECTED",
+        "detail": "FailedOpWithRevert(0, AA23 reverted, 0x007e472e)"
+      },
+      "pass": true
+    },
+    {
+      "name": "Delegatecall to router",
+      "expect": "VALIDATION_REJECTED",
+      "outcome": {
+        "result": "VALIDATION_REJECTED",
+        "detail": "FailedOpWithRevert(0, AA23 reverted, 0x007e472e)"
+      },
+      "pass": true
+    },
+    {
+      "name": "No paymaster (account self-pays)",
+      "expect": "VALIDATION_REJECTED",
+      "outcome": {
+        "result": "VALIDATION_REJECTED",
+        "detail": "FailedOpWithRevert(0, AA23 reverted, 0x)"
+      },
+      "pass": true
+    },
+    {
+      "name": "Unapproved paymaster",
+      "expect": "VALIDATION_REJECTED",
+      "outcome": {
+        "result": "VALIDATION_REJECTED",
+        "detail": "FailedOpWithRevert(0, AA23 reverted, 0x3e4983f60000000000000000000000000000000000000000000000000000000000000003)"
+      },
+      "pass": true
+    },
+    {
+      "name": "Abnormal gas price (1000x) with approved paymaster",
+      "expect": "VALIDATION_REJECTED",
+      "outcome": {
+        "result": "VALIDATION_REJECTED",
+        "detail": "FailedOpWithRevert(0, AA23 reverted, 0x3e4983f60000000000000000000000000000000000000000000000000000000000000003)"
+      },
+      "pass": true
+    },
+    {
+      "name": "CONTROL: no gas policy, no paymaster",
+      "expect": "EXECUTED_SUCCESS",
+      "outcome": {
+        "result": "EXECUTED_SUCCESS",
+        "detail": "UserOperationEvent success=true",
+        "usdcReceived": "17.919677"
+      },
+      "pass": true
+    },
+    {
+      "name": "CONTROL: no gas policy, unapproved paymaster",
+      "expect": "VALIDATION_REJECTED",
+      "outcome": {
+        "result": "VALIDATION_REJECTED",
+        "detail": "FailedOp(0, AA31 paymaster deposit too low)"
+      },
+      "pass": true
+    },
+    {
+      "name": "Expired: block time after validUntil",
+      "expect": "VALIDATION_REJECTED",
+      "outcome": {
+        "result": "VALIDATION_REJECTED",
+        "detail": "FailedOp(0, AA22 expired or not due)"
+      },
+      "pass": true
+    },
+    {
+      "name": "Rate limit op #1 (enable mode)",
+      "expect": "EXECUTED_SUCCESS",
+      "outcome": {
+        "result": "EXECUTED_SUCCESS",
+        "detail": "UserOperationEvent success=true",
+        "usdcReceived": "8.963436"
+      },
+      "pass": true
+    },
+    {
+      "name": "Rate limit op #2 (regular mode)",
+      "expect": "EXECUTED_SUCCESS",
+      "outcome": {
+        "result": "EXECUTED_SUCCESS",
+        "detail": "UserOperationEvent success=true",
+        "usdcReceived": "8.956240"
+      },
+      "pass": true
+    },
+    {
+      "name": "Rate limit op #3, ~24h later (count=2, interval=0)",
+      "expect": "VALIDATION_REJECTED",
+      "outcome": {
+        "result": "VALIDATION_REJECTED",
+        "detail": "FailedOpWithRevert(0, AA23 reverted, 0x3e4983f60000000000000000000000000000000000000000000000000000000000000002)"
+      },
+      "pass": true
+    }
+  ],
+  "allPass": true
+}

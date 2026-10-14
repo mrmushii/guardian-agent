@@ -1,0 +1,80 @@
+# Gate 0 — Integration Spike Result
+
+**Date:** 2026-10-14 · **Network:** Base Sepolia (84532) · **Method:** read-only RPC and `eth_simulateV1` → `EntryPoint.handleOps`. No transaction has been broadcast.
+
+## Decision
+
+**Direct path: Kernel smart account → SwapRouter02 `exactInputSingle`.** `GuardianSwapExecutor` is not needed.
+
+Call policy v0.0.5 can constrain every required field of the nested `ExactInputSingleParams` tuple. All seven fields are static, so each is an inline 32-byte word at argument offset `i × 32`. These rules were proven with positive and negative cases (below):
+
+| Offset | Field | Rule |
+| --- | --- | --- |
+| 0 | `tokenIn` | `== WETH` |
+| 32 | `tokenOut` | `== USDC` |
+| 64 | `fee` | `== selected tier` |
+| 96 | `recipient` | `== smart account` |
+| 128 | `amountIn` | `<= compiled maxAmountInWei` |
+| 160 | `amountOutMinimum` | **unconstrained** (off-chain, plan §9) |
+| 192 | `sqrtPriceLimitX96` | `== 0` |
+
+## Pinned versions
+
+| Component | Version |
+| --- | --- |
+| EntryPoint | v0.7 `0x0000000071727De22E5E9d8BAf0edAc6f37da032` |
+| Kernel | **v3.3** (`KERNEL_V3_3`). v3.1 was tested first, but it has no `grantAccess`, so a permission the master installs cannot be allowed to call `execute()` (`InvalidValidator`). The full suite was rerun on v3.3: 20/20 pass |
+| `@zerodev/sdk` / `ecdsa-validator` / `permissions` | 5.5.10 / 5.4.9 / 5.6.3 |
+| `viem` / `permissionless` | 2.57.5 / 0.4.1 |
+| Call policy | v0.0.5 `0x85770b902D1e503D5f5141d9eaC16d0d08eEaDd2` |
+| Timestamp policy | `0xB9f8f524bE6EcD8C945b1b87f9ae5C192FdCE20F` |
+| Rate-limit policy | `0xf63d4139B25c836334edD76641356c6b74C86873` (`interval = 0`) |
+| Gas policy | `0xaeFC5AbC67FfD258abD0A3E54f65E70326F84b23` |
+| Bundler / paymaster | Pimlico; verifying paymaster `0x777777777777AeC03fd955926DbF81597e66834C` |
+
+Addresses for both networks are in [`packages/chain/src/index.ts`](../packages/chain/src/index.ts). They were verified by `scripts/gate0/verify-addresses.ts`.
+
+## Deployed testnet account
+
+| Item | Value |
+| --- | --- |
+| Smart account (Kernel v3.3) | `0x11Bc46A51a49d1424c6474fb318C904E451654b7` |
+| Master owner | `0x1FeE37df0111D22616fBA6d51bF64038CF05d290` |
+| Deployment UserOperation | `0x1a170a5a1d83b7dbd8d337d02a09bf8faade3c86fce9912d811c5fcf50777d39` (sponsored, success) |
+| Deployment transaction | [`0x861c…53f3`](https://sepolia.basescan.org/tx/0x861c12f87e05cb5d375e24e7f8a02ec162726a518b27d035d979cdb0d61053f3), block 48110394 |
+
+An earlier v3.1 account (`0x35dA…fF4C`, tx `0xd3fa…03a9`) was deployed before the version change. It is no longer used.
+
+## Permission evidence
+
+Full record: [`evidence/gate0-permissions.json`](evidence/gate0-permissions.json). Reproduce with `node --env-file=.env --import tsx scripts/gate0/permission-harness.ts`.
+
+Each negative case differs from the passing allowed swap in exactly one respect.
+
+| Case | Result | Cause |
+| --- | --- | --- |
+| Allowed swap at compiled cap | Executed, USDC received | — |
+| Wrong target / wrong selector / batch with forbidden call / delegatecall | AA23 `0x007e472e` | No permission matches the call type, target, and selector. The selector has no public name; the cause is attributed by differential comparison |
+| Wrong tokenIn, tokenOut, fee, recipient, nonzero price limit; `amountIn = cap + 1` | AA23 `CallViolatesParamRule()` | Call policy |
+| No paymaster | AA23 | Gas policy. The control without the gas policy succeeds |
+| Unapproved paymaster | AA23 `PolicyFailed(3)` | Gas policy. The control fails only later, at the paymaster stage (AA31) |
+| 1000× gas price with the approved paymaster | AA23 `PolicyFailed(3)` | Gas policy's cumulative allowance |
+| Block time after `validUntil` | AA22 expired | Timestamp policy |
+| Operations 1 and 2, then operation 3 about 24 h later | Success, success, then AA23 `PolicyFailed(2)` | Rate limit. `interval = 0` makes the count session-wide, with no reset |
+
+## Findings that affect later gates
+
+1. **`amountOutMinimum` is not bound on-chain.** A compromised backend can set it to 0 within the token cap. This matches plan §9. State it in the security report.
+2. **Base Sepolia pools are not market-priced.** The fee-3000 pool quotes about 2× Chainlink, and the fee-500 pool about −20%. A price-divergence risk rule would block testnet swaps. That threshold must be network-specific, or the testnet run must be labeled as an exception.
+3. **Feed freshness must follow each feed's heartbeat.** The Base Sepolia USDC/USD feed was about 21 h old while ETH/USD was about 2 min old.
+4. **Enable-mode verification gas exceeds 1.5M.** The first session operation deploys the account and installs four policies. The bundler estimate must be used, not a fixed limit.
+5. **Alchemy free tier limits `eth_getLogs` to a 10-block range.** Watcher backfill must page in 10-block windows or use a different provider tier.
+6. **Installing the permission needs more than 800k call gas.** It installs four policies, so the authorize batch must use bundler-estimated gas.
+7. The `tslib` peer dependency is missing from `@zerodev/ecdsa-validator`, so it is installed explicitly.
+
+## Not yet done
+
+- [x] One valid UserOperation actually sent through the bundler (account deployment, above).
+- [ ] "Not yet valid" (`validAfter`). Simulated block time cannot move backwards. Test it with a future `validAfter` in Gate A.
+- [x] Revocation, proven in simulation (`docs/evidence/gate-a-simulation.json`). A real testnet run is pending.
+- [ ] Mainnet paymaster sponsorship. Verify before the mainnet proof.

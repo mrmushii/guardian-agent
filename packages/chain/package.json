@@ -1,0 +1,1 @@
+{ "name": "@guardian/chain", "private": true, "type": "module", "exports": "./src/index.ts" }
