@@ -1,0 +1,92 @@
+{
+  "generatedAt": "2026-10-14T14:44:50.202Z",
+  "method": "eth_simulateV1 → EntryPoint.handleOps (no broadcast)",
+  "smartAccount": "0x11Bc46A51a49d1424c6474fb318C904E451654b7",
+  "permissionId": "0xfdc568f7",
+  "validationNonce": 1,
+  "compiled": {
+    "maxAmountInWei": "3595621464886958",
+    "allowanceWei": "7191242929773916",
+    "maxOps": 2
+  },
+  "stateOverrides": "WETH balance 1 WETH for the smart account (simulation only)",
+  "steps": [
+    {
+      "label": "Agent swap BEFORE authorization",
+      "result": "VALIDATION_REJECTED",
+      "detail": "FailedOpWithRevert(0, AA23 reverted, 0x)",
+      "expect": "VALIDATION_REJECTED",
+      "pass": true
+    },
+    {
+      "label": "Master: authorize (bounded approve + install permission)",
+      "result": "EXECUTED_SUCCESS",
+      "detail": "UserOperationEvent success=true",
+      "tokenTransfers": [],
+      "expect": "EXECUTED_SUCCESS",
+      "pass": true
+    },
+    {
+      "label": "WETH allowance after authorize",
+      "result": "CALL_OK",
+      "detail": "ok",
+      "returnData": "0x00000000000000000000000000000000000000000000000000198c65b8529d5c",
+      "expect": "CALL_OK",
+      "pass": true,
+      "allowance": "7191242929773916"
+    },
+    {
+      "label": "Agent swap at cap after authorization",
+      "result": "EXECUTED_SUCCESS",
+      "detail": "UserOperationEvent success=true",
+      "tokenTransfers": [
+        {
+          "token": "0x036cbd53842c5426634e7929541ec2318f3dcf7e",
+          "from": "0x46880b404CD35c165EDdefF7421019F8dD25F4Ad",
+          "to": "0x11Bc46A51a49d1424c6474fb318C904E451654b7",
+          "value": "17919677"
+        },
+        {
+          "token": "0x4200000000000000000000000000000000000006",
+          "from": "0x11Bc46A51a49d1424c6474fb318C904E451654b7",
+          "to": "0x46880b404CD35c165EDdefF7421019F8dD25F4Ad",
+          "value": "3595621464886958"
+        }
+      ],
+      "expect": "EXECUTED_SUCCESS",
+      "pass": true
+    },
+    {
+      "label": "Agent swap cap+1 wei",
+      "result": "VALIDATION_REJECTED",
+      "detail": "FailedOpWithRevert(0, AA23 reverted, 0x59d52e40)",
+      "expect": "VALIDATION_REJECTED",
+      "pass": true
+    },
+    {
+      "label": "Master: revoke (uninstall + clear allowance)",
+      "result": "EXECUTED_SUCCESS",
+      "detail": "UserOperationEvent success=true",
+      "tokenTransfers": [],
+      "expect": "EXECUTED_SUCCESS",
+      "pass": true
+    },
+    {
+      "label": "WETH allowance after revoke",
+      "result": "CALL_OK",
+      "detail": "ok",
+      "returnData": "0x0000000000000000000000000000000000000000000000000000000000000000",
+      "expect": "CALL_OK",
+      "pass": true,
+      "allowance": "0"
+    },
+    {
+      "label": "Agent swap AFTER revocation",
+      "result": "VALIDATION_REJECTED",
+      "detail": "FailedOpWithRevert(0, AA23 reverted, 0x)",
+      "expect": "VALIDATION_REJECTED",
+      "pass": true
+    }
+  ],
+  "allPass": true
+}
