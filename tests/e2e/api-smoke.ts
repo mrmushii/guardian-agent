@@ -1,0 +1,20 @@
+// API smoke test against a running web server (testnet). Run: node --env-file=.env --import tsx tests/e2e/api-smoke.ts
+import { privateKeyToAccount } from "viem/accounts";
+import { createSiweMessage } from "viem/siwe";
+const B = "http://localhost:3000", owner = privateKeyToAccount(process.env.TESTNET_OWNER_PRIVATE_KEY as `0x${string}`);
+const post = (p: string, b: unknown, cookie = "") => fetch(B + p, { method: "POST", headers: { "content-type": "application/json", cookie }, body: JSON.stringify(b) });
+const { nonce, chainId } = await (await post("/api/auth/nonce", { address: owner.address })).json();
+const message = createSiweMessage({ address: owner.address, chainId, domain: "localhost:3000", nonce, uri: B, version: "1" });
+const signature = await owner.signMessage({ message });
+const v = await post("/api/auth/verify", { message, signature });
+const cookie = (v.headers.get("set-cookie") ?? "").split(";")[0]!;
+console.log("verify:", v.status, await v.text(), "cookie set:", !!cookie);
+const replay = await post("/api/auth/verify", { message, signature });
+console.log("replayed sign-in:", replay.status, await replay.text());
+const d = await fetch(B + "/api/dashboard", { headers: { cookie } });
+const j = await d.json();
+console.log("dashboard:", d.status, JSON.stringify({ identities: j.identities, session: j.session, compiled: j.compiled, portfolio: j.portfolio, budget: j.budget }));
+const t = await (await fetch(B + "/api/timeline", { headers: { cookie } })).json();
+console.log("timeline events:", t.events.length, t.events.slice(0, 3).map((e: { type: string }) => e.type));
+const forged = await fetch(B + "/api/dashboard", { headers: { cookie: cookie.replace(/.$/, (c) => (c === "A" ? "B" : "A")) } });
+console.log("tampered cookie:", forged.status);
