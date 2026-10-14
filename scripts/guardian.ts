@@ -2,6 +2,7 @@
 // the engine prepares master ops, the owner signs the userOpHash, the engine verifies and submits.
 //   register | status | authorize | revoke | approve <actionId> | decline <actionId> | reconcile | resume
 //   evaluate | fund-weth <eth> | buy-weth <usdc> | balance-portfolio
+//   reset-demo [usd]   (master: keep $usd WETH + $usd USDC, move the surplus to Wallet B)
 //   b-address | b-buy-weth <usdc> | send-weth <usd>   (Wallet B sponsored smart account → Guardian, demo trigger)
 import { and, desc, eq } from "drizzle-orm";
 import { encodeFunctionData, erc20Abi, parseEther, parseAbi, type Address, type Hex } from "viem";
@@ -115,6 +116,23 @@ switch (cmd) {
     const k = (Number(wethOut) / 1e18) * (Number(prices.wethUsd.answer) / 1e8) / (Number(probe) / 1e6);
     const x = BigInt(Math.floor(Number(bal) / (1 + k)));
     out({ usdcBalance: Number(bal) / 1e6, valueRatioK: k.toFixed(4), swappingUsdc: Number(x) / 1e6, ...(await masterBuyWeth(owner, x)) }); break;
+  }
+  case "reset-demo": { // master moves the surplus to Wallet B, leaving the Guardian account at $10 WETH + $10 USDC (plan §13 start)
+    const keepCents = BigInt(Math.round(Number(arg ?? "10") * 100));
+    const { account } = await createMasterAccount(ctx.publicClient, owner);
+    const { account: b } = await createMasterAccount(ctx.publicClient, walletB);
+    const prices = await readReferencePrices(ctx.publicClient, ctx.network);
+    const bal = (t: Address) => ctx.publicClient.readContract({ address: t, abi: erc20Abi, functionName: "balanceOf", args: [account.address] });
+    const [weth, usdcBal] = await Promise.all([bal(ctx.network.weth), bal(ctx.network.usdc)]);
+    const keepWeth = (keepCents * 10n ** BigInt(16 + prices.wethUsd.decimals)) / prices.wethUsd.answer;
+    const keepUsdc = keepCents * 10_000n;
+    if (weth < keepWeth || usdcBal < keepUsdc) throw new Error("Not enough balance to keep the requested amounts");
+    const client = createSponsoredClient(account, ctx.chain, ctx.publicClient, ctx.pimlicoApiKey);
+    const send = (t: Address, v: bigint) => ({ to: t, value: 0n, data: encodeFunctionData({ abi: erc20Abi, functionName: "transfer", args: [b.address, v] }) });
+    const hash = await client.sendUserOperation({ calls: [send(ctx.network.weth, weth - keepWeth), send(ctx.network.usdc, usdcBal - keepUsdc)] });
+    const r = await client.waitForUserOperationReceipt({ hash });
+    await appendAudit(ctx.db, { accountId: await accountId(), type: "DEMO_RESET", level: "INFO", message: `Owner reset demo portfolio to $${Number(keepCents) / 100} WETH + $${Number(keepCents) / 100} USDC; surplus moved to Wallet B`, data: { transactionHash: r.receipt.transactionHash, explorer: `https://sepolia.basescan.org/tx/${r.receipt.transactionHash}` } });
+    out({ keptWethWei: keepWeth, keptUsdc: Number(keepUsdc) / 1e6, movedToWalletB: { wethWei: weth - keepWeth, usdc: Number(usdcBal - keepUsdc) / 1e6 }, success: r.success, tx: r.receipt.transactionHash }); break;
   }
   case "b-address": { const { account } = await createMasterAccount(ctx.publicClient, walletB); out({ walletB: account.address }); break; }
   case "b-buy-weth": { out(await masterBuyWeth(walletB, usdc(arg, "15"))); break; }

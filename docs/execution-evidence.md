@@ -28,6 +28,8 @@ On the explorer, the transaction sender is the bundler. The authority behind eac
 | 9 | Re-authorize: new permission `0x32588915`, signer `0x0E41E69c…6607` | Master | — | [`0x7ca4960c…2f6bb88c`](https://sepolia.basescan.org/tx/0x7ca4960c1fe945ea692bcef7b491f93560a3f013b7cac61c1b3f57aa2f6bb88c) | — | Success |
 | 10 | **E8: permitted swap with impossible `amountOutMinimum`** | Agent session | `0x509287ed…94fcfb227` | [`0x84e27e2a…9096eae6e4`](https://sepolia.basescan.org/tx/0x84e27e2a5e9552620bec2b9658373524bdb0464a4854ce64b3e12c9096eae6e4) | 48113696 | Outer tx **success**; UserOperation **failed** ("Too little received") |
 
+Later housekeeping (not scenario evidence): the session was revoked and re-authorized as permission `0x5064ff44` ([`0x344b8c25…99e3e9f`](https://sepolia.basescan.org/tx/0x344b8c259b002021144f83e4195ad4cd5449df5aa6c283b88c07eae9c99e3e9f)), and the demo portfolio was reset to $10 WETH + $10 USDC with the surplus moved to Wallet B ([`0xaf1fdf38…3331e21f`](https://sepolia.basescan.org/tx/0xaf1fdf38e7e5ede317974026ef02c6546f8c5ce5a7741ce6e5a60c523331e21f)).
+
 ## Scenario 1 — autonomous (E1, testnet)
 
 The worker detected the WETH transfer. It then:
