@@ -1,0 +1,1 @@
+{"name":"@guardian/portfolio","private":true,"type":"module","exports":"./src/index.ts","dependencies":{"@guardian/policy":"workspace:*"}}
