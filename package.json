@@ -9,7 +9,8 @@
     "db:generate": "drizzle-kit generate",
     "db:migrate": "node --env-file=.env ./node_modules/drizzle-kit/bin.cjs migrate",
     "guardian": "node --env-file=.env --import tsx scripts/guardian.ts",
-    "worker": "node --env-file=.env --import tsx apps/worker/src/index.ts"
+    "worker": "node --env-file=.env --import tsx apps/worker/src/index.ts",
+    "test:e2e": "playwright test"
   },
   "devDependencies": {
     "@guardian/account": "workspace:*",
@@ -23,6 +24,7 @@
     "@guardian/portfolio": "workspace:*",
     "@guardian/risk": "workspace:*",
     "@guardian/simulation": "workspace:*",
+    "@playwright/test": "^1.64.0",
     "@types/node": "^26.6.5",
     "@zerodev/ecdsa-validator": "^5.4.9",
     "@zerodev/permissions": "^5.6.3",

@@ -1,4 +1,6 @@
 import { and, eq, inArray } from "drizzle-orm";
+import { concatHex, pad, type Address } from "viem";
+import { entryPoint07Abi } from "viem/account-abstraction";
 import { privateKeyToAccount } from "viem/accounts";
 import { toECDSASigner } from "@zerodev/permissions/signers";
 import { KernelV3_3AccountAbi } from "@zerodev/sdk";
@@ -45,6 +47,18 @@ export async function loadAgent(ctx: EngineContext, account: AccountRow, session
   return { permission, agentAccount };
 }
 
+/**
+ * Operations the agent permission has consumed, read from the EntryPoint nonce sequence for the
+ * permission's validator key (Kernel v3 key: mode 0x00 | type 0x02 | permissionId | 0x0000).
+ * Every validated op — including ones whose execution later reverted — advances it, exactly as the
+ * rate-limit policy counts. Needs no session key.
+ */
+export async function agentOpsUsed(ctx: EngineContext, account: Address, permissionId: string): Promise<number> {
+  const key = BigInt(pad(concatHex(["0x00", "0x02", pad(permissionId as `0x${string}`, { size: 20, dir: "right" }), "0x0000"]), { size: 24 }));
+  const nonce = await ctx.publicClient.readContract({ address: ctx.network.entryPoint, abi: entryPoint07Abi, functionName: "getNonce", args: [account, key] });
+  return Number(nonce & ((1n << 64n) - 1n));
+}
+
 /** On-chain truth for session usability: installed with execute access, inside its time window. */
 export async function sessionStatus(ctx: EngineContext, account: AccountRow, session: SessionRow | null, compilation: CompilationRow | null, now = new Date()): Promise<SessionStatus> {
   if (!session || !compilation) return "NONE";
@@ -54,6 +68,7 @@ export async function sessionStatus(ctx: EngineContext, account: AccountRow, ses
   if (now >= session.validUntil) return "EXPIRED";
   const vId = `0x02${session.permissionId.slice(2).padEnd(40, "0")}` as `0x${string}`;
   const allowed = await ctx.publicClient.readContract({ address: account.address as `0x${string}`, abi: KernelV3_3AccountAbi, functionName: "isAllowedSelector", args: [vId, KERNEL_EXECUTE_SELECTOR] });
-  return allowed ? "ACTIVE" : "REVOKED";
+  if (!allowed) return "REVOKED";
+  return (await agentOpsUsed(ctx, account.address as Address, session.permissionId)) >= compilation.maxOps ? "EXHAUSTED" : "ACTIVE";
 }
 export { permissionValidationId };

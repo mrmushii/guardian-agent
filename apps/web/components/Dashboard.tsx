@@ -11,11 +11,11 @@ type Dash = {
   monitoring: { enabled: boolean; pausedReason: string | null };
   policy: { ethMinPct: number; ethMaxPct: number; targetEthPct: number; maxAutoTxUsd: number; dailyBudgetUsd: number; maxSlippageBps: number } | null;
   session: { status: string; onChain: string; permissionId: string; validUntil: string; authorizeUserOpHash: string | null } | null;
-  compiled: { maxAmountInWei: string; maxOps: number; opsUsed: number; allowanceWei: string; authPrice: number; bufferBps: number; reauthAtPrice: number } | null;
+  compiled: { maxAmountInWei: string; maxOps: number; opsUsed: number | null; allowanceWei: string; authPrice: number; bufferBps: number; reauthAtPrice: number } | null;
   budget: { day: string; usedCents: string; budgetCents: number };
   portfolio: { wethUsd: string; usdcUsd: string; totalUsd: string; wethWeightPct: number; assessment: string; ethUsd: number; block: string } | { error: string };
   actions: { id: string; state: string; tier: string | null; reasons: string[] | null; plan: Record<string, unknown> | null; requestedUsdCents: string | null; createdAt: string; error: string | null; decision: { decision: string; reason: string } | null }[];
-  outcomes: Record<string, number>;
+  outcomes: { agentConfirmed: number; masterConfirmed: number; waiting: number; blocked: number; stopped: number; noAction: number };
   operations: { id: string; authority: string; purpose: string; state: string; userOpHash: string | null; transactionHash: string | null; block: string | null; userOpSuccess: boolean | null; explorer: string | null; createdAt: string }[];
   pendingSignatures: { id: string; purpose: string; userOpHash: string; actionId: string | null }[];
 };
@@ -29,7 +29,7 @@ const api = async <T,>(path: string, body?: unknown): Promise<T> => {
 };
 const short = (a?: string | null) => (a ? `${a.slice(0, 6)}…${a.slice(-4)}` : "—");
 const weth = (wei?: string) => (wei ? (Number(wei) / 1e18).toFixed(6) : "—");
-const time = (iso: string) => new Date(iso).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", second: "2-digit" });
+const time = (iso: string) => new Date(iso).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", second: "2-digit", hour12: false });
 
 /** Lifecycle shown as a rail; the current step of the latest action is highlighted. */
 const RAIL = ["TRIGGERED", "PLANNING", "SIMULATING", "SUBMITTING", "PENDING", "CONFIRMED"] as const;
@@ -108,8 +108,8 @@ export default function Dashboard() {
   const pending = dash.actions.filter((a) => a.state === "PENDING_APPROVAL" || a.state === "MASTER_SIGNING");
   const sessionLive = dash.session?.onChain === "ACTIVE";
   const usedUsd = Number(dash.budget.usedCents) / 100;
-  const opsLeft = dash.compiled ? Math.max(0, dash.compiled.maxOps - dash.compiled.opsUsed) : 0;
-  const counts = (k: string[]) => k.reduce((n, x) => n + (dash.outcomes[x] ?? 0), 0);
+  const opsLeft = dash.compiled?.opsUsed == null ? null : Math.max(0, dash.compiled.maxOps - dash.compiled.opsUsed);
+  const o = dash.outcomes;
 
   return (
     <div className={s.page}>
@@ -132,12 +132,13 @@ export default function Dashboard() {
         </div>
         {pol && (
           <div className={s.fenceWrap}>
+            <div className={s.targetLabel} style={{ left: `${pol.targetEthPct}%` }}>target {pol.targetEthPct}%</div>
             <div className={s.fence} role="img" aria-label={`Allowed band ${pol.ethMinPct} to ${pol.ethMaxPct} percent, target ${pol.targetEthPct}, current ${p?.wethWeightPct ?? "unknown"}`}>
               <div className={s.band} style={{ left: `${pol.ethMinPct}%`, width: `${pol.ethMaxPct - pol.ethMinPct}%` }} />
               <div className={s.target} style={{ left: `${pol.targetEthPct}%` }} />
               {p && <div className={`${s.marker} ${p.wethWeightPct > pol.ethMaxPct ? s.markerOut : ""}`} style={{ left: `${Math.min(100, Math.max(0, p.wethWeightPct))}%` }} />}
             </div>
-            <div className={s.fenceScale}><span>0%</span><span style={{ left: `${pol.ethMinPct}%` }}>{pol.ethMinPct}</span><span style={{ left: `${pol.targetEthPct}%` }}>target {pol.targetEthPct}</span><span style={{ left: `${pol.ethMaxPct}%` }}>{pol.ethMaxPct}</span><span>100%</span></div>
+            <div className={s.fenceScale}><span>0%</span><span style={{ left: `${pol.ethMinPct}%` }}>{pol.ethMinPct}%</span><span style={{ left: `${pol.ethMaxPct}%` }}>{pol.ethMaxPct}%</span><span>100%</span></div>
             <p className={s.heroStatus}>
               {!p ? `Portfolio unavailable: ${"error" in dash.portfolio ? dash.portfolio.error : ""}`
                 : p.assessment === "SELL_WETH" ? `Above the ${pol.ethMaxPct}% limit. The agent sells WETH back toward ${pol.targetEthPct}%.`
@@ -223,10 +224,11 @@ export default function Dashboard() {
             <h2>Agent authority</h2>
             {dash.session ? (
               <>
-                <p className={sessionLive ? s.live : s.dead}>{sessionLive ? "Active on-chain" : `Not usable: ${dash.session.onChain.toLowerCase().replaceAll("_", " ")}`}</p>
+                <p className={sessionLive ? s.live : s.dead}>{sessionLive ? "Active on-chain"
+                  : dash.session.onChain === "EXHAUSTED" ? "All swaps used. Authorize again to continue." : `Not usable: ${dash.session.onChain.toLowerCase().replaceAll("_", " ")}`}</p>
                 <dl className={s.facts}>
                   <dt>Per swap</dt><dd>{weth(dash.compiled?.maxAmountInWei)} WETH <span className="muted">(≤ ${pol?.maxAutoTxUsd} at ${dash.compiled?.authPrice.toFixed(0)})</span></dd>
-                  <dt>Swaps left</dt><dd>{opsLeft} of {dash.compiled?.maxOps}</dd>
+                  <dt>Swaps left</dt><dd>{opsLeft ?? "unknown"} of {dash.compiled?.maxOps} <span className="muted">(counted on-chain)</span></dd>
                   <dt>Today</dt><dd>${usedUsd.toFixed(2)} of ${(dash.budget.budgetCents / 100).toFixed(2)}</dd>
                   <dt>Expires</dt><dd>{new Date(dash.session.validUntil).toLocaleString()}</dd>
                   <dt>Reauthorize at</dt><dd>ETH ≥ ${dash.compiled?.reauthAtPrice.toFixed(0)}</dd>
@@ -264,11 +266,12 @@ export default function Dashboard() {
           <section className={s.panel} aria-label="Outcomes">
             <h2>Outcomes</h2>
             <dl className={s.outcomes}>
-              <div className={s.oGood}><dt>Confirmed</dt><dd>{counts(["CONFIRMED"])}</dd></div>
-              <div className={s.oWarn}><dt>Needed approval</dt><dd>{counts(["PENDING_APPROVAL", "MASTER_SIGNING", "CANCELLED"])}</dd></div>
-              <div className={s.oBad}><dt>Blocked by policy</dt><dd>{counts(["REJECTED"])}</dd></div>
-              <div className={s.oBad}><dt>Stopped or reverted</dt><dd>{counts(["FAILED", "EXECUTION_FAILED"])}</dd></div>
-              <div><dt>No action</dt><dd>{counts(["NO_ACTION", "WAIT"])}</dd></div>
+              <div className={s.oGood}><dt>Done by the agent</dt><dd>{o.agentConfirmed}</dd></div>
+              <div className={s.oGood}><dt>Done with your approval</dt><dd>{o.masterConfirmed}</dd></div>
+              <div className={s.oWarn}><dt>Waiting for you</dt><dd>{o.waiting}</dd></div>
+              <div className={s.oBad}><dt>Blocked by policy</dt><dd>{o.blocked}</dd></div>
+              <div className={s.oBad}><dt>Stopped or reverted</dt><dd>{o.stopped}</dd></div>
+              <div><dt>No action needed</dt><dd>{o.noAction}</dd></div>
             </dl>
           </section>
 

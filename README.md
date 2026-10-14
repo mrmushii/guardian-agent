@@ -30,8 +30,11 @@ Design references: [plan.md](plan.md), [architecture.md](architecture.md), [docs
 corepack pnpm install
 cp .env.example .env            # fill in values; see docs in .env.example
 corepack pnpm db:migrate        # creates tables with RLS enabled
-corepack pnpm test              # unit + database-invariant tests
+corepack pnpm test              # unit, fail-closed, and database-invariant tests
+corepack pnpm --filter @guardian/web build && corepack pnpm test:e2e   # dashboard browser tests (Playwright)
 ```
+
+The browser tests sign in with an injected EIP-1193 provider backed by the **testnet** owner key, against localhost only.
 
 ## Testing runbook (Base Sepolia)
 
