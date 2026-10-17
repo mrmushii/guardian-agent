@@ -23,6 +23,8 @@ export const HumanPolicySchema = z
     dailyBudgetUsd: usd,
     maxSlippageBps: z.number().int().min(0).max(10_000),
     sessionDurationHours: z.number().int().positive(),
+    /** Step toward target at Tier 1 (capped trades) instead of escalating a cap-exceeding move. Default true. */
+    allowPartialAutonomy: z.boolean().optional(),
   })
   .refine((p) => p.ethMinPct <= p.targetEthPct && p.targetEthPct <= p.ethMaxPct, {
     message: "Require ethMinPct <= targetEthPct <= ethMaxPct",

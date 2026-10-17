@@ -77,8 +77,16 @@ export const policyCompilations = pgTable("policy_compilations", {
   authPriceTimestamp: timestamp("auth_price_timestamp", { withTimezone: true }).notNull(),
   bufferBps: integer("buffer_bps").notNull(),
   maxAmountInWei: amount("max_amount_in_wei").notNull(),
+  /** Ops per rate-limit window (v1: per session). */
   maxOps: integer("max_ops").notNull(),
   allowanceWei: amount("allowance_wei").notNull(),
+  /** Permission layout (packages/account PermissionVersion). 1 = sell-only legacy, 2 = two-way + resetting window. */
+  permissionVersion: integer("permission_version").notNull().default(1),
+  /** v2 buy side: exactOutputSingle amountInMaximum ceiling and bounded USDC router allowance. */
+  maxUsdcInRaw: amount("max_usdc_in_raw"),
+  usdcAllowanceRaw: amount("usdc_allowance_raw"),
+  /** v2 rate-limit window (seconds). */
+  windowSec: integer("window_sec"),
   gasAllowanceWei: amount("gas_allowance_wei").notNull(),
   /** Target, selector, assets, recipient, fee tier, paymaster, policy contract addresses. */
   restrictions: jsonb("restrictions").notNull(),

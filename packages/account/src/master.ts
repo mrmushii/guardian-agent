@@ -16,31 +16,35 @@ const grantExecute = (account: Address, permission: PermissionPlugin, allow: boo
   data: encodeFunctionData({ abi: KernelV3_3AccountAbi, functionName: "grantAccess", args: [permissionValidationId(permission), KERNEL_EXECUTE_SELECTOR, allow] }),
 });
 
-const approve = (n: NetworkConfig, amount: bigint): HexCall => ({
-  to: n.weth, value: 0n, data: encodeFunctionData({ abi: erc20Abi, functionName: "approve", args: [n.swapRouter02, amount] }),
+const approve = (token: Address, n: NetworkConfig, amount: bigint): HexCall => ({
+  to: token, value: 0n, data: encodeFunctionData({ abi: erc20Abi, functionName: "approve", args: [n.swapRouter02, amount] }),
 });
 
+/** Bounded router allowances granted with a session. `usdc` is absent for sell-only (v1) permissions. */
+export interface AgentAllowances { weth: bigint; usdc?: bigint }
+
 /**
- * Master-only batch for "Authorize Guardian": a bounded WETH allowance to the router
- * (never unlimited), on-chain installation of the agent permission, and access to execute() only.
+ * Master-only batch for "Authorize Guardian": bounded WETH (and, for two-way sessions, USDC) allowances to the
+ * router (never unlimited), on-chain installation of the agent permission, and access to execute() only.
  * `validationNonce` must be the Kernel's current validation nonce.
  */
-export async function authorizeAgentCalls(n: NetworkConfig, account: Address, permission: PermissionPlugin, allowanceWei: bigint, validationNonce: number): Promise<HexCall[]> {
-  if (allowanceWei <= 0n) throw new Error("allowance must be positive and bounded");
+export async function authorizeAgentCalls(n: NetworkConfig, account: Address, permission: PermissionPlugin, allowance: AgentAllowances, validationNonce: number): Promise<HexCall[]> {
+  if (allowance.weth <= 0n || (allowance.usdc !== undefined && allowance.usdc <= 0n)) throw new Error("allowance must be positive and bounded");
   const install = encodeFunctionData({
     abi: KernelV3_3AccountAbi, functionName: "installValidations",
     args: [[permissionValidationId(permission)], [{ nonce: validationNonce, hook: zeroAddress }], [await permission.getEnableData(account)], ["0x"]],
   });
-  return [approve(n, allowanceWei), { to: account, value: 0n, data: install }, grantExecute(account, permission, true)];
+  const approvals = [approve(n.weth, n, allowance.weth), ...(allowance.usdc !== undefined ? [approve(n.usdc, n, allowance.usdc)] : [])];
+  return [...approvals, { to: account, value: 0n, data: install }, grantExecute(account, permission, true)];
 }
 
-/** Master-only batch for "Revoke Agent": uninstall the permission and optionally clear the allowance. */
+/** Master-only batch for "Revoke Agent": uninstall the permission and optionally clear both router allowances. */
 export async function revokeAgentCalls(n: NetworkConfig, account: Address, permission: PermissionPlugin, clearAllowance: boolean): Promise<HexCall[]> {
   const uninstall = encodeFunctionData({
     abi: KernelV3_3AccountAbi, functionName: "uninstallValidation",
     args: [permissionValidationId(permission), await permission.getEnableData(account), "0x"],
   });
   const calls: HexCall[] = [grantExecute(account, permission, false), { to: account, value: 0n, data: uninstall }];
-  if (clearAllowance) calls.push(approve(n, 0n));
+  if (clearAllowance) calls.push(approve(n.weth, n, 0n), approve(n.usdc, n, 0n));
   return calls;
 }

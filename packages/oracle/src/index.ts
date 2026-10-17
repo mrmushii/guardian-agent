@@ -42,3 +42,31 @@ export async function readReferencePrices(client: PublicClient, n: NetworkConfig
   ]);
   return { wethUsd, usdcUsd, readAt: now };
 }
+
+const roundAbi = parseAbi([
+  "function latestRoundData() view returns (uint80 roundId,int256 answer,uint256 startedAt,uint256 updatedAt,uint80 answeredInRound)",
+  "function getRoundData(uint80 roundId) view returns (uint80 roundId,int256 answer,uint256 startedAt,uint256 updatedAt,uint80 answeredInRound)",
+]);
+
+export interface RecentMove { rounds: number; spanSec: number; changeBps: number; rangeBps: number }
+
+/**
+ * Net change and high–low range of a feed over its last `rounds` rounds (agent context, never a gate).
+ * Rounds are walked back within the current phase; missing rounds end the walk. Throws on RPC failure.
+ */
+export async function recentMove(client: PublicClient, feed: Address, rounds = 24): Promise<RecentMove> {
+  const [latestId, latest, , latestAt] = await client.readContract({ address: feed, abi: roundAbi, functionName: "latestRoundData" });
+  const ids = Array.from({ length: rounds - 1 }, (_, i) => latestId - BigInt(i + 1));
+  const prior = await Promise.all(ids.map((id) => client.readContract({ address: feed, abi: roundAbi, functionName: "getRoundData", args: [id] }).catch(() => null)));
+  const points: { answer: bigint; at: bigint }[] = [{ answer: latest, at: latestAt }];
+  for (const r of prior) { if (!r || r[1] <= 0n || r[3] === 0n) break; points.push({ answer: r[1], at: r[3] }); }
+  const oldest = points[points.length - 1]!;
+  const answers = points.map((p) => p.answer);
+  const hi = answers.reduce((a, b) => (b > a ? b : a)), lo = answers.reduce((a, b) => (b < a ? b : a));
+  return {
+    rounds: points.length,
+    spanSec: Number(latestAt - oldest.at),
+    changeBps: Number(((latest - oldest.answer) * 10_000n) / oldest.answer),
+    rangeBps: Number(((hi - lo) * 10_000n) / lo),
+  };
+}

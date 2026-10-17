@@ -49,7 +49,7 @@ const SELECTOR = toFunctionSelector(routerAbi[0]);
 const [, answer, , updatedAt] = await client.readContract({ address: A.ethUsd, abi: feedAbi, functionName: "latestRoundData" });
 const now = Math.floor(Date.now() / 1000);
 const policy = HumanPolicySchema.parse({ ethMinPct: 45, ethMaxPct: 55, targetEthPct: 53, maxAutoTxUsd: 10, dailyBudgetUsd: 25, maxSlippageBps: 50, sessionDurationHours: 24 });
-const compiled = compilePolicy({ policy, authPrice: { answer, decimals: 8 }, authPriceSource: `chainlink:${A.ethUsd}`, authPriceTimestamp: new Date(Number(updatedAt) * 1000), bufferBps: 1500, maxOps: 2, authorizedAt: new Date(now * 1000) });
+const compiled = compilePolicy({ policy, authPrice: { answer, decimals: 8 }, authPriceSource: `chainlink:${A.ethUsd}`, authPriceTimestamp: new Date(Number(updatedAt) * 1000), bufferBps: 1500, usdcAuthPrice: { answer: 10n ** 8n, decimals: 8 }, usdcBufferBps: 200, maxOpsPerWindow: 2, windowSec: 86_400, /* v1-equivalent: one 24 h window = 2 ops per session */ authorizedAt: new Date(now * 1000) });
 const cap = compiled.maxAmountInWei;
 const validAfter = now - 60, validUntil = Math.floor(compiled.validUntil.getTime() / 1000);
 const GAS_ALLOWANCE_WEI = 10n ** 16n; // 0.01 ETH cumulative gas authority for the session

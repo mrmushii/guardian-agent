@@ -3,11 +3,13 @@
 //   register | status | authorize | revoke | approve <actionId> | decline <actionId> | reconcile | resume
 //   evaluate | fund-weth <eth> | buy-weth <usdc> | balance-portfolio
 //   reset-demo [usd]   (master: keep $usd WETH + $usd USDC, move the surplus to Wallet B)
-//   b-address | b-buy-weth <usdc> | send-weth <usd>   (Wallet B sponsored smart account → Guardian, demo trigger)
+//   b-address | b-buy-weth <usdc> | send-weth <usd> | send-usdc <usd>   (Wallet B sponsored smart account → Guardian, demo triggers)
+//   set-policy '<json fields>'   (new policy version, e.g. '{"sessionDurationHours":168}'; authorize again afterwards)
 import { and, desc, eq } from "drizzle-orm";
 import { encodeFunctionData, erc20Abi, parseEther, parseAbi, type Address, type Hex } from "viem";
 import { privateKeyToAccount } from "viem/accounts";
 import { agentActions, appendAudit, policies, smartAccounts, users } from "@guardian/db";
+import { HumanPolicySchema } from "@guardian/policy";
 import { createMasterAccount, createSponsoredClient, KERNEL_VERSION, ENTRY_POINT } from "@guardian/account";
 import { createEngineContext, declineApproval, loadAccountState, prepareApproval, prepareAuthorization, prepareRevocation, readPortfolio,
   reconcile, runRebalance, sessionStatus, submitMasterSignature, fmtBps, fmtUsd18, bundler } from "@guardian/engine";
@@ -16,7 +18,7 @@ import { readReferencePrices } from "@guardian/oracle";
 if (process.env.GUARDIAN_CHAIN_ID && process.env.GUARDIAN_CHAIN_ID !== "84532") throw new Error("CLI is testnet-only");
 const ctx = createEngineContext({ ...process.env, GUARDIAN_CHAIN_ID: "84532" });
 const owner = privateKeyToAccount(process.env.TESTNET_OWNER_PRIVATE_KEY as Hex);
-const DEFAULT_POLICY = { ethMinPct: 45, ethMaxPct: 55, targetEthPct: 53, maxAutoTxUsd: 10, dailyBudgetUsd: 25, maxSlippageBps: 50, sessionDurationHours: 24 };
+const DEFAULT_POLICY = { ethMinPct: 45, ethMaxPct: 55, targetEthPct: 53, maxAutoTxUsd: 10, dailyBudgetUsd: 25, maxSlippageBps: 50, sessionDurationHours: 168 };
 const out = (o: unknown) => console.log(JSON.stringify(o, (_, v) => (typeof v === "bigint" ? `${v}` : v), 2));
 
 async function accountId() {
@@ -89,7 +91,8 @@ switch (cmd) {
     const actions = await ctx.db.select({ id: agentActions.id, state: agentActions.state, tier: agentActions.tier, createdAt: agentActions.createdAt }).from(agentActions).where(eq(agentActions.accountId, id)).orderBy(desc(agentActions.createdAt)).limit(5);
     out({ account: { id, address: st.account.address, owner: st.account.ownerAddress, monitoring: st.account.monitoringEnabled, pausedReason: st.account.pausedReason },
       policy: st.policy, session: st.session && { status: st.session.status, onChain: await sessionStatus(ctx, st.account, st.session, st.compilation), permissionId: st.session.permissionId, signer: st.session.signerAddress, validUntil: st.session.validUntil },
-      compiled: st.compilation && { maxAmountInWei: st.compilation.maxAmountInWei, maxOps: st.compilation.maxOps, allowanceWei: st.compilation.allowanceWei },
+      compiled: st.compilation && { permissionVersion: st.compilation.permissionVersion, maxAmountInWei: st.compilation.maxAmountInWei, maxUsdcInRaw: st.compilation.maxUsdcInRaw,
+        maxOpsPerWindow: st.compilation.maxOps, windowSec: st.compilation.windowSec, allowanceWei: st.compilation.allowanceWei, usdcAllowanceRaw: st.compilation.usdcAllowanceRaw },
       portfolio, recentActions: actions });
     break;
   }
@@ -149,6 +152,29 @@ switch (cmd) {
     const r = await client.waitForUserOperationReceipt({ hash });
     out({ sentUsd: Number(cents) / 100, wei, from: b.address, userOpHash: hash, tx: r.receipt.transactionHash, explorer: `https://sepolia.basescan.org/tx/${r.receipt.transactionHash}` }); break;
   }
-  default: console.log("commands: register | status | authorize | revoke | approve <id> | decline <id> | reconcile | resume | evaluate | fund-weth <eth> | buy-weth <usdc> | balance-portfolio | b-address | b-buy-weth <usdc> | send-weth <usd>");
+  case "send-usdc": { // Wallet B sends `arg` USD of USDC to the Guardian account: pushes WETH weight down (buy-side trigger)
+    const raw = usdc(arg, "12");
+    const { account: b } = await createMasterAccount(ctx.publicClient, walletB);
+    const bal = await ctx.publicClient.readContract({ address: ctx.network.usdc, abi: erc20Abi, functionName: "balanceOf", args: [b.address] });
+    if (bal < raw) throw new Error(`Wallet B has ${Number(bal) / 1e6} USDC, needs ${Number(raw) / 1e6}`);
+    const { account: guardian } = await createMasterAccount(ctx.publicClient, owner);
+    const client = createSponsoredClient(b, ctx.chain, ctx.publicClient, ctx.pimlicoApiKey);
+    const hash = await client.sendUserOperation({ calls: [{ to: ctx.network.usdc, value: 0n, data: encodeFunctionData({ abi: erc20Abi, functionName: "transfer", args: [guardian.address, raw] }) }] });
+    const r = await client.waitForUserOperationReceipt({ hash });
+    out({ sentUsdc: Number(raw) / 1e6, from: b.address, userOpHash: hash, tx: r.receipt.transactionHash, explorer: `https://sepolia.basescan.org/tx/${r.receipt.transactionHash}` }); break;
+  }
+  case "set-policy": { // owner publishes a new policy version (validated); the next authorization compiles it
+    const id = await accountId();
+    const st = await loadAccountState(ctx, id);
+    const next = HumanPolicySchema.parse({ ...(st.policy ?? DEFAULT_POLICY), ...JSON.parse(arg ?? "{}") });
+    const version = (st.policyRow?.version ?? 0) + 1;
+    await ctx.db.transaction(async (tx) => {
+      await tx.update(policies).set({ active: false }).where(eq(policies.accountId, id));
+      await tx.insert(policies).values({ accountId: id, version, policy: next, active: true });
+    });
+    await appendAudit(ctx.db, { accountId: id, type: "POLICY_UPDATED", level: "INFO", message: `Owner published policy v${version}`, data: next });
+    out({ version, policy: next, note: "Authorize again so the on-chain permission matches" }); break;
+  }
+  default: console.log("commands: register | status | authorize | revoke | approve <id> | decline <id> | reconcile | resume | evaluate | fund-weth <eth> | buy-weth <usdc> | balance-portfolio | b-address | b-buy-weth <usdc> | send-weth <usd> | send-usdc <usd> | set-policy <json>");
 }
 await ctx.close();

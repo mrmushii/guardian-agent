@@ -2,8 +2,10 @@ import { GUARDIAN_CONFIG, WETH_DECIMALS, type UsdPrice } from "@guardian/policy"
 
 export type RiskClass = "LOW" | "MEDIUM" | "HIGH";
 export interface RiskInput {
-  amountInWei: bigint;
-  quoteOutRaw: bigint;      // USDC, 6 decimals
+  /** WETH leg of the trade (wei): sold for a sell, bought for a buy. */
+  wethWei: bigint;
+  /** USDC leg (6 decimals): quoted output for a sell, quoted input for a buy. */
+  usdcRaw: bigint;
   poolWethReserve: bigint;
   wethUsd: UsdPrice;
   usdcUsd: UsdPrice;
@@ -27,12 +29,12 @@ const bpsDiff = (a: bigint, b: bigint) => Number(((a > b ? a - b : b - a) * 10_0
 /** Deterministic risk (plan §9, docs/decisions.md D4/E1/E2). The LLM never computes this. */
 export function assessRisk(r: RiskInput): RiskResult {
   const cfg = GUARDIAN_CONFIG;
-  // Execution price (USD per WETH, 8dp) implied by the quote, valued at the USDC oracle price.
-  const quoteUsd8 = (r.quoteOutRaw * r.usdcUsd.answer * 10n ** BigInt(WETH_DECIMALS + 8)) / (r.amountInWei * 10n ** BigInt(6 + r.usdcUsd.decimals));
+  // Execution price (USD per WETH, 8dp) implied by the quote, valued at the USDC oracle price. Same for both directions.
+  const quoteUsd8 = (r.usdcRaw * r.usdcUsd.answer * 10n ** BigInt(WETH_DECIMALS + 8)) / (r.wethWei * 10n ** BigInt(6 + r.usdcUsd.decimals));
   const oracleUsd8 = (r.wethUsd.answer * 10n ** 8n) / 10n ** BigInt(r.wethUsd.decimals);
   const divergenceBps = bpsDiff(quoteUsd8, oracleUsd8);
   const usdcDeviationBps = bpsDiff(r.usdcUsd.answer, 10n ** BigInt(r.usdcUsd.decimals));
-  const shareBps = r.poolWethReserve === 0n ? 10_000 : Number((r.amountInWei * 10_000n) / r.poolWethReserve);
+  const shareBps = r.poolWethReserve === 0n ? 10_000 : Number((r.wethWei * 10_000n) / r.poolWethReserve);
 
   const components = {
     liquidity: clamp((100 * shareBps) / cfg.liquidityFullScoreShareBps),

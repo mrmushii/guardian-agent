@@ -78,3 +78,29 @@ Each negative case differs from the passing allowed swap in exactly one respect.
 - [ ] "Not yet valid" (`validAfter`). Simulated block time cannot move backwards. Test it with a future `validAfter` in Gate A.
 - [x] Revocation, proven in simulation (`docs/evidence/gate-a-simulation.json`). A real testnet run is pending.
 - [ ] Mainnet paymaster sponsorship. Verify before the mainnet proof.
+
+## Addendum (2026-10-18): two-way permission and resetting rate limit
+
+**Method:** `scripts/gate0/two-way-harness.ts`, simulation only (`eth_simulateV1` → `EntryPoint.handleOps`). Record: [`evidence/gate0-two-way-permissions.json`](evidence/gate0-two-way-permissions.json). All 19 cases pass.
+
+**Buy side.** A second call-policy permission on the same router, selector `exactOutputSingle` (USDC → WETH). Its tuple is also all-static. A different selector means the sell rule and the buy rule cannot collide.
+
+| Offset | Field | Rule |
+| --- | --- | --- |
+| 0 | `tokenIn` | `== USDC` |
+| 32 | `tokenOut` | `== WETH` |
+| 64 | `fee` | `== selected tier` |
+| 96 | `recipient` | `== smart account` |
+| 128 | `amountOut` | unconstrained (the size comes from the planner) |
+| 160 | `amountInMaximum` | `<= compiled USDC cap` |
+| 192 | `sqrtPriceLimitX96` | `== 0` |
+
+The buy side is stricter than the sell side. `amountInMaximum` bounds the most USDC the swap can spend **on-chain**, so a poor price cannot make the account overspend. On the sell side, `amountOutMinimum` is still checked only off-chain.
+
+Negative cases rejected with `CallViolatesParamRule`: cap + 1, attacker recipient, reversed tokens, attacker token, wrong fee, non-zero price limit, USDC through the sell selector, and `USDC.transfer`.
+
+**Rate limit.** The default `RateLimitPolicy` (`0xf63d…6873`) **never resets**, even with `interval > 0`: after the interval passes it still returns `PolicyFailed(2)`. `RateLimitPolicyWithReset` (`0x6a06…ca9b`, an SDK constant) restores the count once `interval` has elapsed. Agent permissions from v2 use the with-reset contract: 6 operations per 24 h window, over a 7-day session.
+
+The window test uses 120 s, not 24 h, because Pimlico paymaster signatures are only valid for minutes. With an hour of simulated time, the result is `AA32 paymaster expired`, not a policy result.
+
+**Versioning.** `policy_compilations.permission_version` records which layout was installed: 1 is sell-only with a session-total count, 2 is two-way with a resetting window. The engine rebuilds the exact permission for that version, so older sessions can still be revoked.

@@ -36,8 +36,10 @@ async function evaluate(accountId: string, trigger: { key: string; kind: string;
     const snap = await readPortfolio(ctx, st.account.address as Address, st.policy);
     await ctx.db.insert(watcherCheckpoints).values({ accountId, lastBlock: snap.blockNumber, heartbeatAt: new Date() })
       .onConflictDoUpdate({ target: watcherCheckpoints.accountId, set: { lastBlock: snap.blockNumber, heartbeatAt: new Date() } });
-    if (snap.assessment.kind !== "SELL_WETH") return;
-    const detail = trigger.detail ?? `WETH weight ${fmtBps(snap.assessment.valuation.wethWeightBps)}% above maximum ${st.policy.ethMaxPct}%`;
+    if (snap.assessment.kind === "WITHIN_BAND") return;
+    const weight = fmtBps(snap.assessment.valuation.wethWeightBps);
+    const detail = trigger.detail ?? (snap.assessment.kind === "SELL_WETH"
+      ? `WETH weight ${weight}% above maximum ${st.policy.ethMaxPct}%` : `WETH weight ${weight}% below minimum ${st.policy.ethMinPct}%`);
     const res = await runRebalance(ctx, accountId, { key: trigger.key, kind: trigger.kind, detail, block: snap.blockNumber });
     log.info({ accountId, trigger: trigger.key, res }, "rebalance evaluated");
   } catch (e) {
@@ -53,22 +55,24 @@ async function tick() {
   for (const a of await monitoredAccounts()) await evaluate(a.id, { key: `alloc:${window}`, kind: "ALLOCATION_POLL" });
 }
 
-/** WebSocket hint: incoming WETH transfers trigger immediately. Polling remains the source of truth. */
+/** WebSocket hint: incoming WETH or USDC transfers trigger immediately. Polling remains the source of truth. */
 function watchTransfers(accounts: { id: string; address: string }[]) {
   const wsUrl = ctx.chain.id === 8453 ? process.env.BASE_MAINNET_WS_URL : process.env.BASE_SEPOLIA_WS_URL;
   if (!wsUrl || !accounts.length) return () => {};
   const ws = createPublicClient({ chain: ctx.chain, transport: webSocket(wsUrl, { reconnect: { attempts: 1_000, delay: 2_000 } }) });
   const byAddr = new Map(accounts.map((a) => [a.address.toLowerCase(), a.id]));
-  return ws.watchContractEvent({
-    address: ctx.network.weth, abi: erc20Abi, eventName: "Transfer", args: { to: accounts.map((a) => a.address as Address) },
+  const watch = (token: Address, symbol: "WETH" | "USDC", fmt: (v: bigint) => string) => ws.watchContractEvent({
+    address: token, abi: erc20Abi, eventName: "Transfer", args: { to: accounts.map((a) => a.address as Address) },
     onLogs: (logs) => { for (const l of logs) {
       const id = byAddr.get(l.args.to!.toLowerCase());
       if (!id) continue;
-      void appendAudit(ctx.db, { accountId: id, type: "WETH_TRANSFER_DETECTED", level: "INFO", message: `WETH transfer detected: ${l.args.value} wei from ${l.args.from}`, data: { tx: l.transactionHash, block: l.blockNumber } });
-      void evaluate(id, { key: `transfer:${l.transactionHash}:${l.logIndex}`, kind: "WETH_TRANSFER", detail: `WETH transfer detected (${l.args.value} wei)` });
+      void appendAudit(ctx.db, { accountId: id, type: `${symbol}_TRANSFER_DETECTED`, level: "INFO", message: `${symbol} transfer detected: ${fmt(l.args.value!)} from ${l.args.from}`, data: { tx: l.transactionHash, block: l.blockNumber } });
+      void evaluate(id, { key: `transfer:${l.transactionHash}:${l.logIndex}`, kind: `${symbol}_TRANSFER`, detail: `${symbol} transfer detected (${fmt(l.args.value!)})` });
     } },
     onError: (e) => log.warn({ err: e.message }, "websocket watcher error (polling continues)"),
   });
+  const stops = [watch(ctx.network.weth, "WETH", (v) => `${v} wei`), watch(ctx.network.usdc, "USDC", (v) => `${Number(v) / 1e6} USDC`)];
+  return () => { for (const s of stops) s(); };
 }
 
 async function main() {

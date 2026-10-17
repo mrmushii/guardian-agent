@@ -1,6 +1,6 @@
-import { type HumanPolicy, type UsdPrice, WETH_DECIMALS, assertValidPrice } from "@guardian/policy";
+import { type HumanPolicy, type UsdPrice, USDC_DECIMALS, WETH_DECIMALS, assertValidPrice } from "@guardian/policy";
 
-export const USDC_DECIMALS = 6;
+export { USDC_DECIMALS };
 /** Internal USD fixed-point scale for valuation (not a token amount). */
 const USD_SCALE = 18;
 
@@ -36,25 +36,37 @@ export function valuePortfolio(p: PortfolioInput): Valuation {
 
 export type RebalanceAssessment =
   | { kind: "WITHIN_BAND"; valuation: Valuation }
-  /** Reverse-direction (USDC → WETH) execution is outside the MVP. */
-  | { kind: "UNDERWEIGHT_NO_EXECUTION"; valuation: Valuation }
-  | { kind: "SELL_WETH"; valuation: Valuation; saleUsd18: bigint; amountInWei: bigint };
+  /** Overweight WETH: sell `amountInWei` (exact input) for USDC. */
+  | { kind: "SELL_WETH"; valuation: Valuation; targetPct: number; saleUsd18: bigint; amountInWei: bigint }
+  /** Underweight WETH: buy `wethOutWei` (exact output) with USDC. */
+  | { kind: "BUY_WETH"; valuation: Valuation; targetPct: number; buyUsd18: bigint; wethOutWei: bigint };
+
+export type TradeDirection = "SELL_WETH" | "BUY_WETH";
+
+const usd18ToWethWei = (usd18: bigint, price: UsdPrice) =>
+  (usd18 * 10n ** BigInt(WETH_DECIMALS + price.decimals)) / (price.answer * 10n ** BigInt(USD_SCALE));
 
 /**
- * Triggers only when WETH weight is strictly above ethMaxPct.
- * Sale: V_W − T·V_T, converted to WETH at the reference price and floored
- * (rounding toward selling slightly less).
+ * Triggers only outside [ethMinPct, ethMaxPct] (strict). The trade moves WETH weight to `targetPct`
+ * (default: the policy target; the agent may choose another value inside the band):
+ *   sell: V_W − T·V_T     buy: T·V_T − V_W
+ * converted to WETH at the reference price and floored (rounding toward trading slightly less).
  */
-export function assessRebalance(p: PortfolioInput, policy: HumanPolicy): RebalanceAssessment {
+export function assessRebalance(p: PortfolioInput, policy: HumanPolicy, targetPct: number = policy.targetEthPct): RebalanceAssessment {
+  if (!Number.isInteger(targetPct) || targetPct < policy.ethMinPct || targetPct > policy.ethMaxPct)
+    throw new Error(`targetPct ${targetPct} is outside the owner-approved band`);
   const v = valuePortfolio(p);
   if (v.wethUsd18 * 100n > BigInt(policy.ethMaxPct) * v.totalUsd18) {
-    const saleUsd18 = (v.wethUsd18 * 100n - BigInt(policy.targetEthPct) * v.totalUsd18) / 100n;
-    const amountInWei =
-      (saleUsd18 * 10n ** BigInt(WETH_DECIMALS + p.wethUsd.decimals)) / (p.wethUsd.answer * 10n ** BigInt(USD_SCALE));
-    return { kind: "SELL_WETH", valuation: v, saleUsd18, amountInWei };
+    const saleUsd18 = (v.wethUsd18 * 100n - BigInt(targetPct) * v.totalUsd18) / 100n;
+    return { kind: "SELL_WETH", valuation: v, targetPct, saleUsd18, amountInWei: usd18ToWethWei(saleUsd18, p.wethUsd) };
   }
   if (v.wethUsd18 * 100n < BigInt(policy.ethMinPct) * v.totalUsd18) {
-    return { kind: "UNDERWEIGHT_NO_EXECUTION", valuation: v };
+    const buyUsd18 = (BigInt(targetPct) * v.totalUsd18 - v.wethUsd18 * 100n) / 100n;
+    return { kind: "BUY_WETH", valuation: v, targetPct, buyUsd18, wethOutWei: usd18ToWethWei(buyUsd18, p.wethUsd) };
   }
   return { kind: "WITHIN_BAND", valuation: v };
 }
+
+/** USD size of an out-of-band assessment (null when within band). */
+export const tradeUsd18 = (a: RebalanceAssessment): bigint | null =>
+  a.kind === "SELL_WETH" ? a.saleUsd18 : a.kind === "BUY_WETH" ? a.buyUsd18 : null;

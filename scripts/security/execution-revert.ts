@@ -8,7 +8,7 @@ import { formatUserOperationRequest } from "viem/account-abstraction";
 import { and, eq } from "drizzle-orm";
 import { appendAudit, smartAccounts } from "@guardian/db";
 import { buildSignedUserOp, ENTRY_POINT } from "@guardian/account";
-import { bundler, createEngineContext, explorerTx, loadAccountState, loadAgent, swapCall } from "@guardian/engine";
+import { bundler, createEngineContext, explorerTx, loadAccountState, loadAgent, sellCall } from "@guardian/engine";
 import { mkdirSync, writeFileSync } from "node:fs";
 
 const ctx = createEngineContext({ ...process.env, GUARDIAN_CHAIN_ID: "84532" });
@@ -19,7 +19,7 @@ const { agentAccount } = await loadAgent(ctx, st.account, st.session, st.compila
 const amountIn = 10n ** 14n; // 0.0001 WETH, well inside the cap
 const impossibleMinOut = 10n ** 12n; // 1,000,000 USDC
 const op = await buildSignedUserOp(agentAccount, ctx.chain, ctx.pimlicoApiKey, {
-  calls: [swapCall(ctx, st.account.address as `0x${string}`, amountIn, impossibleMinOut)], verificationGasLimit: 1_500_000n, callGasLimit: 400_000n });
+  calls: [sellCall(ctx, st.account.address as `0x${string}`, amountIn, impossibleMinOut)], verificationGasLimit: 1_500_000n, callGasLimit: 400_000n });
 const hash = await bundler(ctx).request({ method: "eth_sendUserOperation", params: [formatUserOperationRequest(op), ENTRY_POINT.address] } as never) as Hex;
 const r = await bundler(ctx).waitForUserOperationReceipt({ hash, timeout: 120_000 });
 let reason = r.reason ?? "";

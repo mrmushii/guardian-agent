@@ -11,10 +11,10 @@ type Dash = {
   monitoring: { enabled: boolean; pausedReason: string | null };
   policy: { ethMinPct: number; ethMaxPct: number; targetEthPct: number; maxAutoTxUsd: number; dailyBudgetUsd: number; maxSlippageBps: number } | null;
   session: { status: string; onChain: string; permissionId: string; validUntil: string; authorizeUserOpHash: string | null } | null;
-  compiled: { maxAmountInWei: string; maxOps: number; opsUsed: number | null; allowanceWei: string; authPrice: number; bufferBps: number; reauthAtPrice: number } | null;
+  compiled: { twoWay: boolean; maxAmountInWei: string; maxUsdcInRaw: string | null; windowSec: number | null; opsInWindow: number | null; maxOps: number; opsUsed: number | null; allowanceWei: string; authPrice: number; bufferBps: number; reauthAtPrice: number } | null;
   budget: { day: string; usedCents: string; budgetCents: number };
   portfolio: { wethUsd: string; usdcUsd: string; totalUsd: string; wethWeightPct: number; assessment: string; ethUsd: number; block: string } | { error: string };
-  actions: { id: string; state: string; tier: string | null; reasons: string[] | null; plan: Record<string, unknown> | null; requestedUsdCents: string | null; createdAt: string; error: string | null; decision: { decision: string; reason: string } | null }[];
+  actions: { id: string; state: string; tier: string | null; reasons: string[] | null; plan: { direction?: string; wethWei?: string; limitRaw?: string; targetPct?: number; clamped?: boolean } | null; requestedUsdCents: string | null; createdAt: string; error: string | null; decision: { decision: string; reason: string } | null }[];
   outcomes: { agentConfirmed: number; masterConfirmed: number; waiting: number; blocked: number; stopped: number; noAction: number };
   operations: { id: string; authority: string; purpose: string; state: string; userOpHash: string | null; transactionHash: string | null; block: string | null; userOpSuccess: boolean | null; explorer: string | null; createdAt: string }[];
   pendingSignatures: { id: string; purpose: string; userOpHash: string; actionId: string | null }[];
@@ -29,6 +29,7 @@ const api = async <T,>(path: string, body?: unknown): Promise<T> => {
 };
 const short = (a?: string | null) => (a ? `${a.slice(0, 6)}…${a.slice(-4)}` : "—");
 const weth = (wei?: string) => (wei ? (Number(wei) / 1e18).toFixed(6) : "—");
+const usdcFmt = (raw?: string | null) => (raw ? (Number(raw) / 1e6).toFixed(2) : "—");
 const time = (iso: string) => new Date(iso).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", second: "2-digit", hour12: false });
 
 /** Lifecycle shown as a rail; the current step of the latest action is highlighted. */
@@ -108,7 +109,11 @@ export default function Dashboard() {
   const pending = dash.actions.filter((a) => a.state === "PENDING_APPROVAL" || a.state === "MASTER_SIGNING");
   const sessionLive = dash.session?.onChain === "ACTIVE";
   const usedUsd = Number(dash.budget.usedCents) / 100;
-  const opsLeft = dash.compiled?.opsUsed == null ? null : Math.max(0, dash.compiled.maxOps - dash.compiled.opsUsed);
+  const c = dash.compiled;
+  // v2: ops per resetting window (DB view of what the chain enforces); v1: ops per session (EntryPoint nonce).
+  const opsLeft = c?.twoWay ? (c.opsInWindow == null ? null : Math.max(0, c.maxOps - c.opsInWindow))
+    : c?.opsUsed == null ? null : Math.max(0, c.maxOps - c.opsUsed);
+  const windowHours = c?.windowSec ? c.windowSec / 3600 : null;
   const o = dash.outcomes;
 
   return (
@@ -136,13 +141,13 @@ export default function Dashboard() {
             <div className={s.fence} role="img" aria-label={`Allowed band ${pol.ethMinPct} to ${pol.ethMaxPct} percent, target ${pol.targetEthPct}, current ${p?.wethWeightPct ?? "unknown"}`}>
               <div className={s.band} style={{ left: `${pol.ethMinPct}%`, width: `${pol.ethMaxPct - pol.ethMinPct}%` }} />
               <div className={s.target} style={{ left: `${pol.targetEthPct}%` }} />
-              {p && <div className={`${s.marker} ${p.wethWeightPct > pol.ethMaxPct ? s.markerOut : ""}`} style={{ left: `${Math.min(100, Math.max(0, p.wethWeightPct))}%` }} />}
+              {p && <div className={`${s.marker} ${p.wethWeightPct > pol.ethMaxPct || p.wethWeightPct < pol.ethMinPct ? s.markerOut : ""}`} style={{ left: `${Math.min(100, Math.max(0, p.wethWeightPct))}%` }} />}
             </div>
             <div className={s.fenceScale}><span>0%</span><span style={{ left: `${pol.ethMinPct}%` }}>{pol.ethMinPct}%</span><span style={{ left: `${pol.ethMaxPct}%` }}>{pol.ethMaxPct}%</span><span>100%</span></div>
             <p className={s.heroStatus}>
               {!p ? `Portfolio unavailable: ${"error" in dash.portfolio ? dash.portfolio.error : ""}`
-                : p.assessment === "SELL_WETH" ? `Above the ${pol.ethMaxPct}% limit. The agent sells WETH back toward ${pol.targetEthPct}%.`
-                : p.assessment === "UNDERWEIGHT_NO_EXECUTION" ? `Below ${pol.ethMinPct}%. Buying WETH is outside this version, so nothing executes.`
+                : p.assessment === "SELL_WETH" ? `Above the ${pol.ethMaxPct}% limit. The agent sells WETH back toward its target.`
+                : p.assessment === "BUY_WETH" ? `Below the ${pol.ethMinPct}% limit. The agent buys WETH back toward its target.`
                 : "Inside the allowed band. Nothing to do."}
               {p && <> WETH ${p.wethUsd} · USDC ${p.usdcUsd}</>}
             </p>
@@ -225,16 +230,18 @@ export default function Dashboard() {
             {dash.session ? (
               <>
                 <p className={sessionLive ? s.live : s.dead}>{sessionLive ? "Active on-chain"
-                  : dash.session.onChain === "EXHAUSTED" ? "All swaps used. Authorize again to continue." : `Not usable: ${dash.session.onChain.toLowerCase().replaceAll("_", " ")}`}</p>
+                  : dash.session.onChain === "EXHAUSTED" ? (c?.twoWay ? `All swaps for this ${windowHours} h window used. The count resets on its own; bigger moves ask you.` : "All swaps used. Authorize again to continue.")
+                  : `Not usable: ${dash.session.onChain.toLowerCase().replaceAll("_", " ")}`}</p>
                 <dl className={s.facts}>
-                  <dt>Per swap</dt><dd>{weth(dash.compiled?.maxAmountInWei)} WETH <span className="muted">(≤ ${pol?.maxAutoTxUsd} at ${dash.compiled?.authPrice.toFixed(0)})</span></dd>
-                  <dt>Swaps left</dt><dd>{opsLeft ?? "unknown"} of {dash.compiled?.maxOps} <span className="muted">(counted on-chain)</span></dd>
+                  <dt>Per sale</dt><dd>{weth(c?.maxAmountInWei)} WETH <span className="muted">(≤ ${pol?.maxAutoTxUsd} at ${c?.authPrice.toFixed(0)})</span></dd>
+                  {c?.twoWay && <><dt>Per purchase</dt><dd>{usdcFmt(c.maxUsdcInRaw)} USDC <span className="muted">(most it can spend)</span></dd></>}
+                  <dt>Swaps left</dt><dd>{opsLeft ?? "unknown"} of {c?.maxOps} {c?.twoWay ? <span className="muted">(per {windowHours} h, resets; enforced on-chain)</span> : <span className="muted">(counted on-chain)</span>}</dd>
                   <dt>Today</dt><dd>${usedUsd.toFixed(2)} of ${(dash.budget.budgetCents / 100).toFixed(2)}</dd>
                   <dt>Expires</dt><dd>{new Date(dash.session.validUntil).toLocaleString()}</dd>
                   <dt>Reauthorize at</dt><dd>ETH ≥ ${dash.compiled?.reauthAtPrice.toFixed(0)}</dd>
                   <dt>Permission</dt><dd className="hash">{dash.session.permissionId}</dd>
                 </dl>
-                <p className="muted">The agent can only swap WETH for USDC on Uniswap, back to this account, within these limits. Anything else is refused by the account itself.</p>
+                <p className="muted">The agent can only swap {c?.twoWay ? "between WETH and USDC" : "WETH for USDC"} on Uniswap, back to this account, within these limits. Anything else is refused by the account itself.</p>
               </>
             ) : <p className="muted">No agent session. Authorize Guardian to let it rebalance within your limits.</p>}
             <div className={s.actions}>
@@ -248,7 +255,11 @@ export default function Dashboard() {
               <h2>Waiting for your approval</h2>
               {pending.map((a) => (
                 <div key={a.id} className={s.approval}>
-                  <p>Sell ≈ ${(Number(a.requestedUsdCents ?? 0) / 100).toFixed(2)} of WETH ({weth(String(a.plan?.amountInWei ?? ""))} WETH)</p>
+                  <p>{a.plan?.direction === "BUY_WETH"
+                    ? <>Buy {weth(a.plan?.wethWei)} WETH for at most {usdcFmt(a.plan?.limitRaw)} USDC</>
+                    : <>Sell ≈ ${(Number(a.requestedUsdCents ?? 0) / 100).toFixed(2)} of WETH ({weth(a.plan?.wethWei)} WETH)</>}
+                    {a.plan?.targetPct !== undefined && <span className="muted"> · toward {a.plan.targetPct}%</span>}</p>
+                  {a.decision?.reason && <p className="muted">Agent: {a.decision.reason}</p>}
                   <p className="muted">Needs you because: {(a.reasons ?? []).join(", ").replaceAll("_", " ").toLowerCase()}. Prices are rechecked before you sign.</p>
                   <div className={s.actions}>
                     <button className="primary" disabled={!!busy} onClick={() => run("approve", async () => {

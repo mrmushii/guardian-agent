@@ -20,5 +20,12 @@ export const GUARDIAN_CONFIG = {
   sequencerGracePeriodSec: 3_600,
   quoteMaxAgeSec: 30,                 // E4
   cooldownSec: 600,                   // E5
-  session: { maxOps: 2, bufferBps: 1_500, gasAllowanceWei: 10n ** 16n }, // E6
+  // E6 (v2): per-window op count that resets (RateLimitPolicyWithReset, Gate 0 addendum), not a session total.
+  session: { maxOpsPerWindow: 6, windowSec: 86_400, bufferBps: 1_500, usdcBufferBps: 200, gasAllowanceWei: 10n ** 16n },
+  /** E7: with partial autonomy, a cap-exceeding move up to this multiple of the cap is stepped at Tier 1. */
+  partialAutonomyMaxMultiple: 3,
+  /** E8: consecutive AI failures before new autonomous actions pause (deterministic fallback before then). */
+  aiFailurePauseThreshold: 3,
+  /** E9: longest WAIT the agent may request before the next evaluation. */
+  maxWaitMinutes: 60,
 } as const;

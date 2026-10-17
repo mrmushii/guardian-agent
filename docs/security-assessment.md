@@ -12,11 +12,26 @@
 | 2 — Master | Owner wallet (Kernel root) | Valid, but beyond agent authority or needing review | Full account authority, used only after revalidation and the owner's signature |
 | 3 — Prohibited | None | Violations, hard gates, HIGH risk | Rejected and audited; never escalated to master automatically |
 
-## What the session key can do
+## What the session key can do (permission v2)
 
-Exactly one function is allowed: `SwapRouter02.exactInputSingle`. The arguments must be WETH → USDC in the configured pool, with the recipient equal to the smart account, `amountIn ≤ 0.00358 WETH`, no price limit and no ETH value. It is valid for 24 hours, allows at most 2 operations in total, requires the approved paymaster, and has a cumulative gas allowance of 0.01 ETH.
+Exactly two functions are allowed, both on `SwapRouter02`, both with the recipient equal to the smart account, the configured pool fee, no price limit and no ETH value:
 
-**Maximum loss if the session key and backend are fully compromised:** at most 2 × 0.00358 WETH can be sold for USDC at a poor price, with the proceeds still landing in the owner's account. Nothing can be transferred out. This is bounded further by the WETH allowance (cap × 2), which drops to 0 on revocation.
+- **Sell:** `exactInputSingle`, WETH → USDC, `amountIn ≤ ` the compiled WETH cap (about $10 at the authorization price, with a 15% buffer).
+- **Buy:** `exactOutputSingle`, USDC → WETH, `amountInMaximum ≤ ` the compiled USDC cap ($10 with a 2% buffer). The most a buy can spend is bound on-chain.
+
+The session lasts 7 days and allows 6 operations per 24 h window (the count resets: `RateLimitPolicyWithReset`). It requires the approved paymaster and has a cumulative gas allowance of 0.01 ETH. Router allowances are bounded at cap × 42 per token and are cleared on revocation.
+
+**Maximum loss if the session key and backend are fully compromised:** up to 6 capped swaps a day between WETH and USDC at a poor price, with every output still landing in the owner's account. Nothing can be transferred out or approved to anyone else. Buys cannot overspend their cap even at a bad price. Sells can accept a bad price (risk 1 below). Revocation stops everything immediately.
+
+## What the AI can and cannot decide
+
+| The agent chooses | Deterministic code / the account decides |
+| --- | --- |
+| REBALANCE, WAIT (1–60 min), ESCALATE or NO_ACTION | Whether the portfolio is out of band at all |
+| A whole-percent target inside the owner's band | The trade size, tokens, pool, recipient, calldata, gas and signature |
+| — | The tier: the agent can only *narrow* it (ESCALATE turns Tier 1 into Tier 2), never widen it |
+
+If no provider returns a valid decision, a rule-based rebalance to the owner's target runs, but only when it is Tier 1 and LOW risk. Otherwise it goes to the master. Three AI failures in a row pause new autonomous actions.
 
 ## Verified evidence
 
@@ -24,7 +39,8 @@ Exactly one function is allowed: `SwapRouter02.exactInputSingle`. The arguments 
 | --- | --- | --- |
 | Forbidden target, selector, token, fee, recipient, amount, batch, delegatecall | `eth_simulateV1` against deployed contracts; each negative differs from a passing positive by one field | All rejected; causes decoded (`CallViolatesParamRule`, no-permission) |
 | Expiry, operation count (session-wide), gas, paymaster | Same; control cases isolate the gas policy | Rejected with `AA22` / `PolicyFailed(2)` / `PolicyFailed(3)` |
-| Real bundler rejects forbidden ops signed by the real session key | `eth_sendUserOperation` to Pimlico, application bypassed | 4/4 rejected, no transaction hash |
+| Real bundler rejects forbidden ops signed by the real session key | `eth_sendUserOperation` to Pimlico, application bypassed | v1: 4/4 rejected. v2 (two-way): 8/8 rejected, including buy-side recipient swap, USDC cap + 1, USDC transfer and USDC approve to an attacker. No transaction hash (`evidence/defense-b-bundler-rejections-v2.json`) |
+| Two-way permission and resetting window | `eth_simulateV1` against deployed contracts (`scripts/gate0/two-way-harness.ts`) | 19/19 cases as expected (`evidence/gate0-two-way-permissions.json`) |
 | Revocation | Master uninstall plus `grantAccess(false)`, then the same key retried | A previously allowed swap is rejected; allowance 0 |
 | Execution failure is not authorization failure | Permitted swap with impossible minimum output | Outer transaction success; UserOperation `success=false` ("Too little received") |
 | Autonomous Tier 1 swap | Real WETH transfer trigger | Confirmed, block 48112653 |
@@ -35,12 +51,14 @@ All hashes are listed in [execution-evidence.md](execution-evidence.md).
 
 ## Known risks and gaps
 
-1. **`amountOutMinimum` is unconstrained on-chain.** A compromised backend could execute up to 2 capped swaps at a bad price. Mitigations: short sessions, a small cap, revocation. A future fix is an oracle-aware execution guard.
+1. **Sell-side `amountOutMinimum` is unconstrained on-chain.** A compromised backend could execute up to 6 capped sells a day at a bad price. (Buys are bounded by `amountInMaximum` on-chain.) Mitigations: short sessions, a small cap, revocation. A future fix is an oracle-aware execution guard.
 2. **USD cap drift.** The token cap is worth more dollars if ETH rises. Reauthorization at +10% (below the 15% buffer) limits this, but between checks it relies on the worker being live.
 3. **Testnet pricing.** Base Sepolia pools quote about 2× Chainlink. The testnet divergence threshold (200%) is deliberately relaxed and labeled `TESTNET_PRICING`. Mainnet uses 2%.
 4. **Forced on-chain validation failure (E4) not yet produced.** It needs Sepolia ETH for the harness EOA. Bundler-level and simulated on-chain rejections are proven.
 5. **Mainnet proof not yet run.** Held until the owner approves real-value testing.
-6. **Single LLM provider configured.** The fallback is implemented, but no OpenAI key is set. Provider outages pause autonomy; they do not trigger unsafe behavior.
+6. **Single LLM provider configured.** The OpenAI fallback is implemented, but no OpenAI key is set. A provider outage falls back to the rule-based Tier 1 rebalance; three in a row pause autonomy. Neither path can widen authority.
+9. **Longer exposure window.** A 7-day session with 6 ops/day is more exposure than v1's 2 ops in 24 h. This is the price of unattended operation. The bound is still fixed on-chain and revocable at any time.
+10. **Window count shown from the database.** The dashboard's "swaps left this window" comes from recorded operations. The chain enforces the real count, so a mismatch can only cause a bundler rejection (fail closed), never an extra operation.
 7. **Key custody.** The session key is decrypted in the worker process. A KMS/HSM signer is future hardening. The master key never reaches the server.
 8. **Audit-log integrity.** Database records are not tamper-proof. Chain evidence (UserOperation and transaction hashes) is the authority.
 

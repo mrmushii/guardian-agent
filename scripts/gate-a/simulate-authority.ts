@@ -21,10 +21,10 @@ if (!(await client.getCode({ address: account }))) throw new Error("run scripts/
 const [, answer, , updatedAt] = await client.readContract({ address: N.chainlinkEthUsd, abi: [{ type: "function", name: "latestRoundData", stateMutability: "view", inputs: [], outputs: [{ type: "uint80" }, { type: "int256" }, { type: "uint256" }, { type: "uint256" }, { type: "uint80" }] }], functionName: "latestRoundData" });
 const now = Math.floor(Date.now() / 1000);
 const policy = HumanPolicySchema.parse({ ethMinPct: 45, ethMaxPct: 55, targetEthPct: 53, maxAutoTxUsd: 10, dailyBudgetUsd: 25, maxSlippageBps: 50, sessionDurationHours: 24 });
-const compiled = compilePolicy({ policy, authPrice: { answer, decimals: 8 }, authPriceSource: `chainlink:${N.chainlinkEthUsd}`, authPriceTimestamp: new Date(Number(updatedAt) * 1000), bufferBps: 1500, maxOps: 2, authorizedAt: new Date((now - 60) * 1000) });
+const compiled = compilePolicy({ policy, authPrice: { answer, decimals: 8 }, authPriceSource: `chainlink:${N.chainlinkEthUsd}`, authPriceTimestamp: new Date(Number(updatedAt) * 1000), bufferBps: 1500, usdcAuthPrice: { answer: 10n ** 8n, decimals: 8 }, usdcBufferBps: 200, maxOpsPerWindow: 2, windowSec: 86_400, /* v1-equivalent: one 24 h window = 2 ops per session */ authorizedAt: new Date((now - 60) * 1000) });
 
 const sessionSigner = await toECDSASigner({ signer: privateKeyToAccount(generatePrivateKey()) });
-const permission = await buildAgentPermission(client, { network: N, smartAccount: account, sessionSigner, compiled, gasAllowanceWei: 10n ** 16n });
+const permission = await buildAgentPermission(client, { network: N, smartAccount: account, sessionSigner, compiled, gasAllowanceWei: 10n ** 16n, version: 1 });
 const agent = await createAgentAccount(client, permission, account, baseSepolia.id);
 const validationNonce = await client.readContract({ address: account, abi: KernelV3_3AccountAbi, functionName: "currentNonce" });
 
@@ -37,7 +37,7 @@ const cap = compiled.maxAmountInWei;
 const blocks = [
   { steps: [
     { kind: "userop" as const, label: "Agent swap BEFORE authorization", op: await op(agent, [swap(cap)]) },
-    { kind: "userop" as const, label: "Master: authorize (bounded approve + install permission)", op: await op(master, await authorizeAgentCalls(N, account, permission, compiled.allowanceWei, validationNonce)) },
+    { kind: "userop" as const, label: "Master: authorize (bounded approve + install permission)", op: await op(master, await authorizeAgentCalls(N, account, permission, { weth: compiled.allowanceWei }, validationNonce)) },
     allowanceCall("WETH allowance after authorize"),
     { kind: "userop" as const, label: "Agent swap at cap after authorization", op: await op(agent, [swap(cap)]) },
     { kind: "userop" as const, label: "Agent swap cap+1 wei", op: await op(agent, [swap(cap + 1n)], 1n) },

@@ -1,0 +1,196 @@
+{
+  "generatedAt": "2026-10-17T18:22:20.744Z",
+  "network": "Base Sepolia (84532)",
+  "method": "eth_simulateV1 → EntryPoint.handleOps (no broadcast)",
+  "smartAccount": "0x11Bc46A51a49d1424c6474fb318C904E451654b7",
+  "sessionSigner": "0x15dBbB9BB53bB3946Bb7dA712aC4bf2bf86D938a",
+  "router": "0x94cC0AaC535CCDB3C01d6787D6413C739ae12bc4",
+  "feeTier": 3000,
+  "caps": {
+    "wethCapWei": "3000000000000000",
+    "usdcCapRaw": "10000000"
+  },
+  "buyQuote": {
+    "amountOutWei": "1000000000000",
+    "quotedUsdcIn": "4261"
+  },
+  "rateLimitContracts": {
+    "plain": "0xf63d4139B25c836334edD76641356c6b74C86873",
+    "withReset": "0x6a06358e6b283921deceabe7e8a3741d506cca9b",
+    "windowSec": 120
+  },
+  "cases": [
+    {
+      "name": "Sell: allowed WETH→USDC exactInputSingle",
+      "expect": "EXECUTED_SUCCESS",
+      "outcome": {
+        "result": "EXECUTED_SUCCESS",
+        "detail": "success=true"
+      },
+      "pass": true
+    },
+    {
+      "name": "Buy: allowed USDC→WETH exactOutputSingle, amountInMaximum = cap",
+      "expect": "EXECUTED_SUCCESS",
+      "outcome": {
+        "result": "EXECUTED_SUCCESS",
+        "detail": "success=true"
+      },
+      "pass": true
+    },
+    {
+      "name": "Buy: amountInMaximum = cap + 1",
+      "expect": "VALIDATION_REJECTED",
+      "outcome": {
+        "result": "VALIDATION_REJECTED",
+        "detail": "FailedOpWithRevert(0, AA23 reverted, 0x59d52e40)"
+      },
+      "pass": true
+    },
+    {
+      "name": "Buy: recipient = attacker",
+      "expect": "VALIDATION_REJECTED",
+      "outcome": {
+        "result": "VALIDATION_REJECTED",
+        "detail": "FailedOpWithRevert(0, AA23 reverted, 0x59d52e40)"
+      },
+      "pass": true
+    },
+    {
+      "name": "Buy: reversed tokens (WETH→USDC via exactOutputSingle)",
+      "expect": "VALIDATION_REJECTED",
+      "outcome": {
+        "result": "VALIDATION_REJECTED",
+        "detail": "FailedOpWithRevert(0, AA23 reverted, 0x59d52e40)"
+      },
+      "pass": true
+    },
+    {
+      "name": "Buy: tokenOut = attacker token",
+      "expect": "VALIDATION_REJECTED",
+      "outcome": {
+        "result": "VALIDATION_REJECTED",
+        "detail": "FailedOpWithRevert(0, AA23 reverted, 0x59d52e40)"
+      },
+      "pass": true
+    },
+    {
+      "name": "Buy: wrong fee tier",
+      "expect": "VALIDATION_REJECTED",
+      "outcome": {
+        "result": "VALIDATION_REJECTED",
+        "detail": "FailedOpWithRevert(0, AA23 reverted, 0x59d52e40)"
+      },
+      "pass": true
+    },
+    {
+      "name": "Buy: non-zero sqrtPriceLimitX96",
+      "expect": "VALIDATION_REJECTED",
+      "outcome": {
+        "result": "VALIDATION_REJECTED",
+        "detail": "FailedOpWithRevert(0, AA23 reverted, 0x59d52e40)"
+      },
+      "pass": true
+    },
+    {
+      "name": "Sell: USDC tokens via exactInputSingle (sell rule)",
+      "expect": "VALIDATION_REJECTED",
+      "outcome": {
+        "result": "VALIDATION_REJECTED",
+        "detail": "FailedOpWithRevert(0, AA23 reverted, 0x59d52e40)"
+      },
+      "pass": true
+    },
+    {
+      "name": "Sell: amountIn = cap + 1",
+      "expect": "VALIDATION_REJECTED",
+      "outcome": {
+        "result": "VALIDATION_REJECTED",
+        "detail": "FailedOpWithRevert(0, AA23 reverted, 0x59d52e40)"
+      },
+      "pass": true
+    },
+    {
+      "name": "USDC.transfer to attacker",
+      "expect": "VALIDATION_REJECTED",
+      "outcome": {
+        "result": "VALIDATION_REJECTED",
+        "detail": "FailedOpWithRevert(0, AA23 reverted, 0x007e472e)"
+      },
+      "pass": true
+    },
+    {
+      "name": "RateLimit (plain, interval=120s): op 1 (sell)",
+      "expect": "EXECUTED_SUCCESS",
+      "outcome": {
+        "result": "EXECUTED_SUCCESS",
+        "detail": "success=true"
+      },
+      "pass": true
+    },
+    {
+      "name": "RateLimit (plain, interval=120s): op 2 (buy)",
+      "expect": "EXECUTED_SUCCESS",
+      "outcome": {
+        "result": "EXECUTED_SUCCESS",
+        "detail": "success=true"
+      },
+      "pass": true
+    },
+    {
+      "name": "RateLimit (plain, interval=120s): op 3 in the same window",
+      "expect": "VALIDATION_REJECTED",
+      "outcome": {
+        "result": "VALIDATION_REJECTED",
+        "detail": "FailedOpWithRevert(0, AA23 reverted, 0x3e4983f60000000000000000000000000000000000000000000000000000000000000002)"
+      },
+      "pass": true
+    },
+    {
+      "name": "RateLimit (plain, interval=120s): op 3 after the window has passed",
+      "expect": "VALIDATION_REJECTED",
+      "outcome": {
+        "result": "VALIDATION_REJECTED",
+        "detail": "FailedOpWithRevert(0, AA23 reverted, 0x3e4983f60000000000000000000000000000000000000000000000000000000000000002)"
+      },
+      "pass": true
+    },
+    {
+      "name": "RateLimit (with-reset, interval=120s): op 1 (sell)",
+      "expect": "EXECUTED_SUCCESS",
+      "outcome": {
+        "result": "EXECUTED_SUCCESS",
+        "detail": "success=true"
+      },
+      "pass": true
+    },
+    {
+      "name": "RateLimit (with-reset, interval=120s): op 2 (buy)",
+      "expect": "EXECUTED_SUCCESS",
+      "outcome": {
+        "result": "EXECUTED_SUCCESS",
+        "detail": "success=true"
+      },
+      "pass": true
+    },
+    {
+      "name": "RateLimit (with-reset, interval=120s): op 3 in the same window",
+      "expect": "VALIDATION_REJECTED",
+      "outcome": {
+        "result": "VALIDATION_REJECTED",
+        "detail": "FailedOpWithRevert(0, AA23 reverted, 0x3f7b7a68)"
+      },
+      "pass": true
+    },
+    {
+      "name": "RateLimit (with-reset, interval=120s): op 3 after the window has passed",
+      "expect": "EXECUTED_SUCCESS",
+      "outcome": {
+        "result": "EXECUTED_SUCCESS",
+        "detail": "success=true"
+      },
+      "pass": true
+    }
+  ],
+  "allPass": true
+}

@@ -1,6 +1,6 @@
 # Guardian Agent — Implementation Plan
 
-**Status:** Planning only. Implementation has not started.
+**Status:** Implemented on Base Sepolia (see README and docs/execution-evidence.md). This document is the original plan; v2 changes (two-way swaps, resetting window, bounded agent decisions) are recorded in docs/decisions.md E6–E9 and the Gate 0 addendum.
 
 **Source:** User-provided “Guardian Agent — Final Corrected Implementation Plan.”
 

@@ -45,18 +45,19 @@ describe("oracle fails closed", () => {
 describe("LLM outage fails closed", () => {
   const ctx: AgentContext = { trigger: { kind: "T", detail: "d" }, portfolio: { wethUsd: "21.25", usdcUsd: "10", totalUsd: "31.25", wethWeightPct: "68" },
     policy: { ethMinPct: 45, ethMaxPct: 55, targetEthPct: 53, maxAutoTxUsd: 10, dailyBudgetUsd: 25 }, recentOutcomes: [] };
+  const bounds = { ethMinPct: 45, ethMaxPct: 55, maxWaitMinutes: 60 };
   const model = (name: string, fn: () => Promise<unknown>): AgentModel => ({ name, decide: fn });
   const ok = model("good", async () => ({ decision: "REBALANCE", targetWethWeight: 0.53, reason: "above band" }));
   it("falls back when the primary provider errors", async () => {
-    const r = await decideWithFallback([model("down", async () => { throw new Error("HTTP 503"); }), ok], ctx, 53);
+    const r = await decideWithFallback([model("down", async () => { throw new Error("HTTP 503"); }), ok], ctx, bounds);
     expect(r.ok && r.provider).toBe("good");
   });
   it("falls back when the primary returns invalid output", async () => {
-    const r = await decideWithFallback([model("bad", async () => ({ decision: "TRANSFER", to: "0xattacker", reason: "x" })), ok], ctx, 53);
+    const r = await decideWithFallback([model("bad", async () => ({ decision: "TRANSFER", to: "0xattacker", reason: "x" })), ok], ctx, bounds);
     expect(r.ok).toBe(true);
   });
   it("returns no decision when every provider fails (caller pauses autonomy)", async () => {
-    const r = await decideWithFallback([model("a", async () => { throw new Error("timeout"); }), model("b", async () => ({ decision: "REBALANCE", targetWethWeight: 0.9, reason: "x" }))], ctx, 53);
+    const r = await decideWithFallback([model("a", async () => { throw new Error("timeout"); }), model("b", async () => ({ decision: "REBALANCE", targetWethWeight: 0.9, reason: "x" }))], ctx, bounds);
     expect(r.ok).toBe(false);
     expect(!r.ok && r.errors).toHaveLength(2);
   });

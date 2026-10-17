@@ -8,7 +8,7 @@ import { and, eq } from "drizzle-orm";
 import { agentSessions, policyCompilations, securityEvents, smartAccounts, appendAudit } from "@guardian/db";
 import { desc } from "drizzle-orm";
 import { buildSignedUserOp, ENTRY_POINT } from "@guardian/account";
-import { bundler, compiledFromRow, createEngineContext, loadAccountState, loadAgent, swapCall } from "@guardian/engine";
+import { buyCall, bundler, compiledFromRow, createEngineContext, isTwoWay, loadAccountState, loadAgent, sellCall } from "@guardian/engine";
 import { mkdirSync, writeFileSync } from "node:fs";
 
 const ctx = createEngineContext({ ...process.env, GUARDIAN_CHAIN_ID: "84532" });
@@ -24,18 +24,29 @@ if (afterRevoke) {
   Object.assign(st, { session: latest, compilation: comp });
 } else if (st.session?.status !== "ACTIVE") throw new Error("Needs an ACTIVE session (run `pnpm guardian authorize`)");
 const { agentAccount } = await loadAgent(ctx, st.account, st.session!, st.compilation!);
-const account = st.account.address as Address, cap = compiledFromRow(st.compilation!).maxAmountInWei;
-const recipientSwap = swapCall(ctx, account, cap, 1n);
+const account = st.account.address as Address, compiled = compiledFromRow(st.compilation!), cap = compiled.maxAmountInWei;
+const twoWay = isTwoWay(st.compilation);
+const recipientSwap = sellCall(ctx, account, cap, 1n);
 recipientSwap.data = recipientSwap.data.replace(account.slice(2).toLowerCase(), ATTACKER.slice(2).toLowerCase()) as Hex;
 
 const attacks = afterRevoke ? [
-  { id: "E7d", name: "After revocation: previously-ALLOWED swap at half cap", call: swapCall(ctx, account, cap / 2n, 1n) },
+  { id: "E7d", name: "After revocation: previously-ALLOWED swap at half cap", call: sellCall(ctx, account, cap / 2n, 1n) },
   { id: "E7e", name: "After revocation: transfer WETH to attacker", call: { to: ctx.network.weth, value: 0n, data: encodeFunctionData({ abi: erc20Abi, functionName: "transfer", args: [ATTACKER, 10n ** 15n] }) } },
 ] : [
   { id: "E6", name: "Prompt-injection payload: transfer entire WETH balance to attacker", call: { to: ctx.network.weth, value: 0n, data: encodeFunctionData({ abi: erc20Abi, functionName: "transfer", args: [ATTACKER, 10n ** 18n] }) } },
   { id: "E7a", name: "Approve attacker as WETH spender (unlimited)", call: { to: ctx.network.weth, value: 0n, data: encodeFunctionData({ abi: erc20Abi, functionName: "approve", args: [ATTACKER, 2n ** 256n - 1n] }) } },
   { id: "E7b", name: "Allowed router, recipient replaced with attacker", call: recipientSwap },
-  { id: "E7c", name: "Allowed swap, amount = compiled cap + 1 wei", call: swapCall(ctx, account, cap + 1n, 1n) },
+  { id: "E7c", name: "Allowed swap, amount = compiled cap + 1 wei", call: sellCall(ctx, account, cap + 1n, 1n) },
+  ...(twoWay ? (() => {
+    const usdcCap = compiled.maxUsdcInRaw, buyToAttacker = buyCall(ctx, account, 10n ** 12n, usdcCap);
+    buyToAttacker.data = buyToAttacker.data.replace(account.slice(2).toLowerCase(), ATTACKER.slice(2).toLowerCase()) as Hex;
+    return [
+      { id: "E7f", name: "Buy side: recipient replaced with attacker", call: buyToAttacker },
+      { id: "E7g", name: "Buy side: amountInMaximum = USDC cap + 1", call: buyCall(ctx, account, 10n ** 12n, usdcCap + 1n) },
+      { id: "E7h", name: "Transfer USDC to attacker", call: { to: ctx.network.usdc, value: 0n, data: encodeFunctionData({ abi: erc20Abi, functionName: "transfer", args: [ATTACKER, usdcCap] }) } },
+      { id: "E7i", name: "Approve attacker as USDC spender (unlimited)", call: { to: ctx.network.usdc, value: 0n, data: encodeFunctionData({ abi: erc20Abi, functionName: "approve", args: [ATTACKER, 2n ** 256n - 1n] }) } },
+    ];
+  })() : []),
 ];
 
 const results = [];
@@ -60,6 +71,7 @@ for (const a of attacks) {
   console.log(`${outcome.rejected ? "REJECTED" : "ACCEPTED!"}  ${a.id} ${a.name}\n          ${String(outcome.rpcError ?? outcome.userOpHash).slice(0, 220)}`);
 }
 mkdirSync("docs/evidence", { recursive: true });
-writeFileSync(afterRevoke ? "docs/evidence/revocation-rejections.json" : "docs/evidence/defense-b-bundler-rejections.json", JSON.stringify({ generatedAt: new Date().toISOString(), network: "Base Sepolia (84532)",
+const suffix = twoWay ? "-v2" : ""; // v2 (two-way) runs keep the original v1 evidence intact
+writeFileSync(`docs/evidence/${afterRevoke ? "revocation-rejections" : "defense-b-bundler-rejections"}${suffix}.json`, JSON.stringify({ generatedAt: new Date().toISOString(), network: "Base Sepolia (84532)",
   method: "Real session key; eth_sendUserOperation to Pimlico; application checks bypassed", results }, (_, v) => (typeof v === "bigint" ? `${v}` : v), 2));
 await ctx.close();

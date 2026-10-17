@@ -6,11 +6,11 @@ import { KernelV3_3AccountAbi } from "@zerodev/sdk";
 import { agentActions, agentSessions, appendAudit, policyCompilations, releaseBudget, transitionAction, userOperations } from "@guardian/db";
 import { GUARDIAN_CONFIG, compilePolicy } from "@guardian/policy";
 import { readReferencePrices } from "@guardian/oracle";
-import { authorizeAgentCalls, buildAgentPermission, encryptSessionKey, revokeAgentCalls, type HexCall } from "@guardian/account";
+import { CURRENT_PERMISSION_VERSION, RATE_LIMIT_WITH_RESET, authorizeAgentCalls, buildAgentPermission, encryptSessionKey, revokeAgentCalls, type HexCall } from "@guardian/account";
 import type { EngineContext } from "./context.js";
 import { loadAccountState } from "./state.js";
 import { readPortfolio } from "./portfolio.js";
-import { buildPlan, planJson, swapCall } from "./pipeline.js";
+import { buildPlan, describeTrade, planJson, swapCall } from "./pipeline.js";
 import { deserializeOp, prepareMasterOp, serializeOp, submitSignedOp } from "./userops.js";
 
 export type MasterPurpose = "AUTHORIZE" | "REVOKE" | "REBALANCE";
@@ -37,13 +37,15 @@ export async function prepareAuthorization(ctx: EngineContext, accountId: string
   const account = st.account.address as Address;
   const prices = await readReferencePrices(ctx.publicClient, ctx.network);
   const now = new Date();
-  const compiled = compilePolicy({ policy: st.policy, authPrice: prices.wethUsd, authPriceSource: `chainlink:${prices.wethUsd.feed}`,
-    authPriceTimestamp: new Date(prices.wethUsd.updatedAt * 1000), bufferBps: GUARDIAN_CONFIG.session.bufferBps,
-    maxOps: GUARDIAN_CONFIG.session.maxOps, authorizedAt: now });
+  const S = GUARDIAN_CONFIG.session;
+  const compiled = compilePolicy({ policy: st.policy, authPrice: prices.wethUsd, usdcAuthPrice: prices.usdcUsd, authPriceSource: `chainlink:${prices.wethUsd.feed}`,
+    authPriceTimestamp: new Date(prices.wethUsd.updatedAt * 1000), bufferBps: S.bufferBps, usdcBufferBps: S.usdcBufferBps,
+    maxOpsPerWindow: S.maxOpsPerWindow, windowSec: S.windowSec, authorizedAt: now });
+  const version = CURRENT_PERMISSION_VERSION;
   const pk = generatePrivateKey();
   const signer = privateKeyToAccount(pk);
   const permission = await buildAgentPermission(ctx.publicClient, { network: ctx.network, smartAccount: account,
-    sessionSigner: await toECDSASigner({ signer }), compiled, gasAllowanceWei: GUARDIAN_CONFIG.session.gasAllowanceWei });
+    sessionSigner: await toECDSASigner({ signer }), compiled, gasAllowanceWei: S.gasAllowanceWei, version });
   const permissionId = permission.getIdentifier();
   const enc = encryptSessionKey(ctx.keyring, pk, account, permissionId);
 
@@ -54,16 +56,19 @@ export async function prepareAuthorization(ctx: EngineContext, accountId: string
     policyId: st.policyRow.id, sessionId: session!.id, authPriceAnswer: compiled.evidence.authPrice.answer.toString(), authPriceDecimals: compiled.evidence.authPrice.decimals,
     authPriceSource: compiled.evidence.authPriceSource, authPriceTimestamp: compiled.evidence.authPriceTimestamp, bufferBps: compiled.evidence.bufferBps,
     maxAmountInWei: compiled.maxAmountInWei.toString(), maxOps: compiled.maxOps, allowanceWei: compiled.allowanceWei.toString(),
-    gasAllowanceWei: GUARDIAN_CONFIG.session.gasAllowanceWei.toString(),
-    restrictions: { target: n.swapRouter02, selector: "exactInputSingle", tokenIn: n.weth, tokenOut: n.usdc, feeTier: n.feeTier, recipient: account,
-      sqrtPriceLimitX96: "0", paymaster: n.paymaster, validAfter: compiled.validAfter.toISOString(), validUntil: compiled.validUntil.toISOString(),
-      kernelExecuteOnly: true, amountOutMinimum: "UNCONSTRAINED_ONCHAIN (off-chain check)" },
+    permissionVersion: version, maxUsdcInRaw: compiled.maxUsdcInRaw.toString(), usdcAllowanceRaw: compiled.usdcAllowanceRaw.toString(), windowSec: compiled.windowSec,
+    gasAllowanceWei: S.gasAllowanceWei.toString(),
+    restrictions: { target: n.swapRouter02, feeTier: n.feeTier, recipient: account, sqrtPriceLimitX96: "0", paymaster: n.paymaster,
+      sell: { selector: "exactInputSingle", tokenIn: n.weth, tokenOut: n.usdc, amountIn: `<= ${compiled.maxAmountInWei}`, amountOutMinimum: "UNCONSTRAINED_ONCHAIN (off-chain check)" },
+      buy: { selector: "exactOutputSingle", tokenIn: n.usdc, tokenOut: n.weth, amountInMaximum: `<= ${compiled.maxUsdcInRaw}`, amountOut: "UNCONSTRAINED_ONCHAIN (off-chain check)" },
+      rateLimit: { policy: RATE_LIMIT_WITH_RESET, count: compiled.maxOps, intervalSec: compiled.windowSec }, totalOps: compiled.totalOps,
+      validAfter: compiled.validAfter.toISOString(), validUntil: compiled.validUntil.toISOString(), kernelExecuteOnly: true },
   });
   const validationNonce = await ctx.publicClient.readContract({ address: account, abi: KernelV3_3AccountAbi, functionName: "currentNonce" });
-  const calls = await authorizeAgentCalls(n, account, permission, compiled.allowanceWei, validationNonce);
+  const calls = await authorizeAgentCalls(n, account, permission, { weth: compiled.allowanceWei, usdc: compiled.usdcAllowanceRaw }, validationNonce);
   const prepared = await storeForSignature(ctx, { accountId, purpose: "AUTHORIZE", owner: st.account.ownerAddress as Address, calls, sessionId: session!.id });
   await appendAudit(ctx.db, { accountId, type: "AUTHORIZATION_PREPARED", level: "INFO",
-    message: `Authorization prepared: cap ${compiled.maxAmountInWei} wei WETH/op, ${compiled.maxOps} ops, allowance ${compiled.allowanceWei} wei, expires ${compiled.validUntil.toISOString()}`,
+    message: `Authorization prepared: sell ≤ ${compiled.maxAmountInWei} wei WETH/op, buy ≤ ${Number(compiled.maxUsdcInRaw) / 1e6} USDC/op, ${compiled.maxOps} ops per ${compiled.windowSec / 3600} h, expires ${compiled.validUntil.toISOString()}`,
     data: { permissionId, signer: signer.address, authPrice: compiled.evidence.authPrice.answer } });
   return { ...prepared, sessionId: session!.id, permissionId, compiled };
 }
@@ -92,23 +97,30 @@ export async function prepareApproval(ctx: EngineContext, actionId: string) {
   const st = await loadAccountState(ctx, action.accountId);
   const account = st.account.address as Address;
   const snap = await readPortfolio(ctx, account, st.policy!);
-  if (snap.assessment.kind !== "SELL_WETH") {
+  if (snap.assessment.kind === "WITHIN_BAND") {
     await transitionAction(ctx.db, actionId, ["REVALIDATING"], "CANCELLED");
-    await audit("CANCELLED", "INFO", "Revalidation: portfolio no longer above the band — approval cancelled");
+    await audit("CANCELLED", "INFO", "Revalidation: portfolio is back inside the band — approval cancelled");
     return { cancelled: true as const };
   }
-  const plan = await buildPlan(ctx, st, snap);
+  const prior = (action.plan as { direction?: string; targetPct?: number } | null) ?? {};
+  if (prior.direction && prior.direction !== snap.assessment.kind) {
+    await transitionAction(ctx.db, actionId, ["REVALIDATING"], "CANCELLED");
+    await audit("CANCELLED", "INFO", "Revalidation: the required trade changed direction — approval cancelled");
+    return { cancelled: true as const };
+  }
+  const plan = await buildPlan(ctx, st, snap, { targetPct: prior.targetPct });
   if (plan.violations.length || plan.risk.classification === "HIGH") {
     await transitionAction(ctx.db, actionId, ["REVALIDATING"], "REJECTED", { plan: planJson(plan) });
     await audit("REJECTED", "FAILURE", `Revalidation rejected: ${[...plan.violations, ...plan.risk.hardGates, plan.risk.classification].join(", ")}`);
     return { cancelled: true as const };
   }
-  const allowance = await ctx.publicClient.readContract({ address: ctx.network.weth, abi: erc20Abi, functionName: "allowance", args: [account, ctx.network.swapRouter02] });
-  const approve = (v: bigint): HexCall => ({ to: ctx.network.weth, value: 0n, data: encodeFunctionData({ abi: erc20Abi, functionName: "approve", args: [ctx.network.swapRouter02, v] }) });
-  const calls = [approve(allowance + plan.amountInWei), swapCall(ctx, account, plan.amountInWei, plan.minOut), approve(allowance)];
+  const tokenIn = plan.direction === "SELL_WETH" ? ctx.network.weth : ctx.network.usdc;
+  const allowance = await ctx.publicClient.readContract({ address: tokenIn, abi: erc20Abi, functionName: "allowance", args: [account, ctx.network.swapRouter02] });
+  const approve = (v: bigint): HexCall => ({ to: tokenIn, value: 0n, data: encodeFunctionData({ abi: erc20Abi, functionName: "approve", args: [ctx.network.swapRouter02, v] }) });
+  const calls = [approve(allowance + plan.amountInRaw), swapCall(ctx, account, plan), approve(allowance)];
   const prepared = await storeForSignature(ctx, { accountId: action.accountId, purpose: "REBALANCE", owner: st.account.ownerAddress as Address, calls, actionId });
   await transitionAction(ctx.db, actionId, ["REVALIDATING"], "MASTER_SIGNING", { plan: planJson(plan, { revalidated: true }), requestedUsdCents: plan.requestedUsdCents });
-  await audit("REVALIDATED", "INFO", `Revalidated for master signature: sell ${plan.amountInWei} wei WETH, min ${Number(plan.minOut) / 1e6} USDC, risk ${plan.risk.score}`);
+  await audit("REVALIDATED", "INFO", `Revalidated for master signature: ${describeTrade(plan)}, risk ${plan.risk.score}`);
   return { cancelled: false as const, ...prepared, plan: planJson(plan) };
 }
 

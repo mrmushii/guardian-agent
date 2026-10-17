@@ -1,12 +1,12 @@
-import { and, eq, inArray } from "drizzle-orm";
+import { and, eq, gt, inArray } from "drizzle-orm";
 import { concatHex, pad, type Address } from "viem";
 import { entryPoint07Abi } from "viem/account-abstraction";
 import { privateKeyToAccount } from "viem/accounts";
 import { toECDSASigner } from "@zerodev/permissions/signers";
 import { KernelV3_3AccountAbi } from "@zerodev/sdk";
-import { agentSessions, policies, policyCompilations, smartAccounts } from "@guardian/db";
+import { agentSessions, policies, policyCompilations, smartAccounts, userOperations } from "@guardian/db";
 import { HumanPolicySchema, type CompiledAuthority, type HumanPolicy, type SessionStatus } from "@guardian/policy";
-import { buildAgentPermission, createAgentAccount, decryptSessionKey, KERNEL_EXECUTE_SELECTOR, permissionValidationId } from "@guardian/account";
+import { buildAgentPermission, createAgentAccount, decryptSessionKey, KERNEL_EXECUTE_SELECTOR, permissionValidationId, type PermissionVersion } from "@guardian/account";
 import type { EngineContext } from "./context.js";
 
 export type AccountRow = typeof smartAccounts.$inferSelect;
@@ -24,10 +24,15 @@ export async function loadAccountState(ctx: EngineContext, accountId: string) {
   return { account, policyRow: policyRow ?? null, policy, session: session ?? null, compilation: compilation ?? null };
 }
 
+export const permissionVersionOf = (c: CompilationRow): PermissionVersion => (c.permissionVersion === 2 ? 2 : 1);
+export const isTwoWay = (c: CompilationRow | null) => !!c && permissionVersionOf(c) === 2;
+
 export function compiledFromRow(c: CompilationRow): CompiledAuthority {
-  const r = c.restrictions as { validAfter: string; validUntil: string };
+  const r = c.restrictions as { validAfter: string; validUntil: string; totalOps?: number };
   return {
-    maxAmountInWei: BigInt(c.maxAmountInWei), maxOps: c.maxOps, allowanceWei: BigInt(c.allowanceWei),
+    maxAmountInWei: BigInt(c.maxAmountInWei), maxUsdcInRaw: BigInt(c.maxUsdcInRaw ?? 0), maxOps: c.maxOps,
+    windowSec: c.windowSec ?? 0, totalOps: r.totalOps ?? c.maxOps,
+    allowanceWei: BigInt(c.allowanceWei), usdcAllowanceRaw: BigInt(c.usdcAllowanceRaw ?? 0),
     validAfter: new Date(r.validAfter), validUntil: new Date(r.validUntil),
     evidence: { maxAutoTxUsdCents: 0n, authPrice: { answer: BigInt(c.authPriceAnswer), decimals: c.authPriceDecimals },
       authPriceSource: c.authPriceSource, authPriceTimestamp: c.authPriceTimestamp, bufferBps: c.bufferBps },
@@ -40,7 +45,7 @@ export async function loadAgent(ctx: EngineContext, account: AccountRow, session
   const sessionSigner = await toECDSASigner({ signer: privateKeyToAccount(pk) });
   const permission = await buildAgentPermission(ctx.publicClient, {
     network: ctx.network, smartAccount: account.address as `0x${string}`, sessionSigner,
-    compiled: compiledFromRow(compilation), gasAllowanceWei: BigInt(compilation.gasAllowanceWei),
+    compiled: compiledFromRow(compilation), gasAllowanceWei: BigInt(compilation.gasAllowanceWei), version: permissionVersionOf(compilation),
   });
   if (permission.getIdentifier() !== session.permissionId) throw new Error("Rebuilt permission does not match the authorized permission");
   const agentAccount = await createAgentAccount(ctx.publicClient, permission, account.address as `0x${string}`, ctx.chain.id);
@@ -59,7 +64,18 @@ export async function agentOpsUsed(ctx: EngineContext, account: Address, permiss
   return Number(nonce & ((1n << 64n) - 1n));
 }
 
-/** On-chain truth for session usability: installed with execute access, inside its time window. */
+/** Agent operations accepted by the bundler in the current rate-limit window (v2). The chain still enforces the count. */
+export async function agentOpsInWindow(ctx: EngineContext, sessionId: string, windowSec: number, now = new Date()): Promise<number> {
+  const since = new Date(now.getTime() - windowSec * 1000);
+  const rows = await ctx.db.select({ id: userOperations.id }).from(userOperations).where(and(eq(userOperations.sessionId, sessionId),
+    eq(userOperations.authority, "AGENT_SESSION"), inArray(userOperations.state, ["SUBMITTING", "SUBMITTED", "UNKNOWN", "INCLUDED"]), gt(userOperations.createdAt, since)));
+  return rows.length;
+}
+
+/**
+ * On-chain truth for session usability: installed with execute access, inside its time window, ops left.
+ * v1: the op count is session-wide. v2: EXHAUSTED means "used up for this window" — it recovers on its own.
+ */
 export async function sessionStatus(ctx: EngineContext, account: AccountRow, session: SessionRow | null, compilation: CompilationRow | null, now = new Date()): Promise<SessionStatus> {
   if (!session || !compilation) return "NONE";
   if (session.status === "REVOKED") return "REVOKED";
@@ -69,6 +85,10 @@ export async function sessionStatus(ctx: EngineContext, account: AccountRow, ses
   const vId = `0x02${session.permissionId.slice(2).padEnd(40, "0")}` as `0x${string}`;
   const allowed = await ctx.publicClient.readContract({ address: account.address as `0x${string}`, abi: KernelV3_3AccountAbi, functionName: "isAllowedSelector", args: [vId, KERNEL_EXECUTE_SELECTOR] });
   if (!allowed) return "REVOKED";
-  return (await agentOpsUsed(ctx, account.address as Address, session.permissionId)) >= compilation.maxOps ? "EXHAUSTED" : "ACTIVE";
+  const c = compiledFromRow(compilation);
+  const used = await agentOpsUsed(ctx, account.address as Address, session.permissionId);
+  if (used >= c.totalOps) return "EXHAUSTED";
+  if (isTwoWay(compilation) && (await agentOpsInWindow(ctx, session.id, c.windowSec, now)) >= c.maxOps) return "EXHAUSTED";
+  return "ACTIVE";
 }
 export { permissionValidationId };
