@@ -8,5 +8,9 @@ const mono = JetBrains_Mono({ subsets: ["latin"], variable: "--font-mono", displ
 export const metadata: Metadata = { title: "Guardian", description: "Policy-bound autonomous wallet: what the agent decides, and the authority it cannot exceed." };
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {
-  return <html lang="en" className={`${sans.variable} ${mono.variable}`}><body>{children}</body></html>;
+  return (
+    <html lang="en" className={`${sans.variable} ${mono.variable}`} suppressHydrationWarning>
+      <body suppressHydrationWarning>{children}</body>
+    </html>
+  );
 }
