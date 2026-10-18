@@ -7,10 +7,11 @@ import { AllocationChart, type Point } from "./Insights";
 import { api, portfolioOf, type Policy } from "./model";
 import type { Ctl } from "./Hero";
 
-type WhatIf = { action: "NOTHING" | "AGENT" | "PARTIAL" | "ASK_OWNER"; text: string; wethPct: number; usd?: number };
+type WhatIf = { action: "NOTHING" | "AGENT" | "PARTIAL" | "ASK_OWNER" | "SIMULATED"; text: string; wethPct: number; usd?: number };
 const ACTION_LABEL: Record<WhatIf["action"], { label: string; tone: string }> = {
   NOTHING: { label: "Nothing to do", tone: l.toneQuiet }, AGENT: { label: "Agent acts alone", tone: l.toneGood },
   PARTIAL: { label: "Agent steps in parts", tone: l.toneAccent }, ASK_OWNER: { label: "Asks you first", tone: l.toneWarn },
+  SIMULATED: { label: "Simulated step", tone: l.toneAccent },
 };
 
 /** Full-page limits editor with a live "what would the agent do right now" preview. */
@@ -82,7 +83,7 @@ export function LimitsEditor({ ctl, points }: { ctl: Ctl; points: Point[] }) {
           <div className={s.panelHead}><h2><Icon name="brain" size={14} /> If you saved this now</h2></div>
           {preview ? (
             <div className={l.whatif}>
-              <span className={`${l.verdict} ${ACTION_LABEL[preview.action].tone}`}>{ACTION_LABEL[preview.action].label}</span>
+              {(() => { const v = ACTION_LABEL[preview.action] ?? { label: preview.action, tone: l.toneQuiet }; return <span className={`${l.verdict} ${v.tone}`}>{v.label}</span>; })()}
               <p>{preview.text}</p>
             </div>
           ) : <p className={s.empty}>{error ?? previewErr ?? "Calculating…"}</p>}
