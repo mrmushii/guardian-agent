@@ -1,0 +1,119 @@
+{
+  "generatedAt": "2026-10-18T15:47:14.599Z",
+  "network": "Base Sepolia (84532)",
+  "method": "eth_simulateV1 → EntryPoint.handleOps (no broadcast), sequential blocks",
+  "design": "one permission validator (session key) per asset, USDC hub",
+  "smartAccount": "0x11Bc46A51a49d1424c6474fb318C904E451654b7",
+  "router": "0x94cC0AaC535CCDB3C01d6787D6413C739ae12bc4",
+  "feeTier": 3000,
+  "keys": {
+    "weth": "0xA788E2f58e98030909e44e330d3745AF3D9dF319",
+    "b": "0x3722a26283A574e7a7edeB1D57f98164a8c9a45B"
+  },
+  "assets": {
+    "weth": "0x4200000000000000000000000000000000000006",
+    "standInB": "0x1111111111111111111111111111111111111111",
+    "hub": "0x036CbD53842c5426634e7929541eC2318f3dCF7e"
+  },
+  "caps": {
+    "wethSell": "3000000000000000",
+    "bSell": "30000000000000000",
+    "usdcForWeth": "10000000",
+    "usdcForB": "4000000"
+  },
+  "priorFinding": "Single call policy with duplicate target+selector entries is rejected at install: 'duplicate permissionHash' (gate0-multi-asset-shared-policy-rejected.json)",
+  "cases": [
+    {
+      "name": "Install WETH permission + sell WETH within its cap",
+      "expect": "AUTHORIZED",
+      "result": "EXECUTED_SUCCESS",
+      "detail": "success=true",
+      "pass": true
+    },
+    {
+      "name": "Install B permission (second validator) + sell B within its cap (10x the WETH cap)",
+      "expect": "AUTHORIZED",
+      "result": "EXECUTION_FAILED",
+      "detail": "success=false",
+      "pass": true
+    },
+    {
+      "name": "WETH key still works after B was installed: buy WETH within its USDC cap",
+      "expect": "AUTHORIZED",
+      "result": "EXECUTED_SUCCESS",
+      "detail": "success=true",
+      "pass": true
+    },
+    {
+      "name": "WETH key: sell above WETH cap",
+      "expect": "VALIDATION_REJECTED",
+      "result": "VALIDATION_REJECTED",
+      "detail": "FailedOpWithRevert(0, AA23 reverted, 0x59d52e40)",
+      "pass": true
+    },
+    {
+      "name": "WETH key cannot trade asset B (sell B)",
+      "expect": "VALIDATION_REJECTED",
+      "result": "VALIDATION_REJECTED",
+      "detail": "FailedOpWithRevert(0, AA23 reverted, 0x59d52e40)",
+      "pass": true
+    },
+    {
+      "name": "WETH key cannot trade asset B (buy B)",
+      "expect": "VALIDATION_REJECTED",
+      "result": "VALIDATION_REJECTED",
+      "detail": "FailedOpWithRevert(0, AA23 reverted, 0x59d52e40)",
+      "pass": true
+    },
+    {
+      "name": "B key cannot trade WETH (sell WETH within WETH cap)",
+      "expect": "VALIDATION_REJECTED",
+      "result": "VALIDATION_REJECTED",
+      "detail": "FailedOpWithRevert(0, AA23 reverted, 0x59d52e40)",
+      "pass": true
+    },
+    {
+      "name": "B key: sell above B cap",
+      "expect": "VALIDATION_REJECTED",
+      "result": "VALIDATION_REJECTED",
+      "detail": "FailedOpWithRevert(0, AA23 reverted, 0x59d52e40)",
+      "pass": true
+    },
+    {
+      "name": "B key: buy B above its USDC cap (below WETH's)",
+      "expect": "VALIDATION_REJECTED",
+      "result": "VALIDATION_REJECTED",
+      "detail": "FailedOpWithRevert(0, AA23 reverted, 0x59d52e40)",
+      "pass": true
+    },
+    {
+      "name": "B key: buy B within its USDC cap",
+      "expect": "AUTHORIZED",
+      "result": "EXECUTION_FAILED",
+      "detail": "success=false",
+      "pass": true
+    },
+    {
+      "name": "B key: recipient = attacker",
+      "expect": "VALIDATION_REJECTED",
+      "result": "VALIDATION_REJECTED",
+      "detail": "FailedOpWithRevert(0, AA23 reverted, 0x59d52e40)",
+      "pass": true
+    },
+    {
+      "name": "B key: direct B→WETH (bypassing the USDC hub)",
+      "expect": "VALIDATION_REJECTED",
+      "result": "VALIDATION_REJECTED",
+      "detail": "FailedOpWithRevert(0, AA23 reverted, 0x59d52e40)",
+      "pass": true
+    },
+    {
+      "name": "WETH key: permitted sell batched with USDC.transfer to attacker",
+      "expect": "VALIDATION_REJECTED",
+      "result": "VALIDATION_REJECTED",
+      "detail": "FailedOpWithRevert(0, AA23 reverted, 0x007e472e)",
+      "pass": true
+    }
+  ],
+  "allPass": true
+}

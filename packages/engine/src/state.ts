@@ -13,15 +13,24 @@ export type AccountRow = typeof smartAccounts.$inferSelect;
 export type SessionRow = typeof agentSessions.$inferSelect;
 export type CompilationRow = typeof policyCompilations.$inferSelect;
 
-export async function loadAccountState(ctx: EngineContext, accountId: string) {
+/** Account, active policy, and the agent session for one asset (legacy callers: WETH). */
+export async function loadAccountState(ctx: EngineContext, accountId: string, asset = "WETH") {
   const [account] = await ctx.db.select().from(smartAccounts).where(eq(smartAccounts.id, accountId));
   if (!account) throw new Error(`Unknown account ${accountId}`);
   const [policyRow] = await ctx.db.select().from(policies).where(and(eq(policies.accountId, accountId), eq(policies.active, true)));
   const policy: HumanPolicy | null = policyRow ? HumanPolicySchema.parse(policyRow.policy) : null;
   const [session] = await ctx.db.select().from(agentSessions)
-    .where(and(eq(agentSessions.accountId, accountId), inArray(agentSessions.status, ["PENDING_AUTHORIZATION", "ACTIVE", "REAUTH_REQUIRED"])));
+    .where(and(eq(agentSessions.accountId, accountId), eq(agentSessions.asset, asset), inArray(agentSessions.status, ["PENDING_AUTHORIZATION", "ACTIVE", "REAUTH_REQUIRED"])));
   const [compilation] = session ? await ctx.db.select().from(policyCompilations).where(eq(policyCompilations.sessionId, session.id)) : [];
   return { account, policyRow: policyRow ?? null, policy, session: session ?? null, compilation: compilation ?? null };
+}
+
+/** Every live agent session (one per traded asset) with its compilation. */
+export async function loadSessions(ctx: EngineContext, accountId: string) {
+  const sessions = await ctx.db.select().from(agentSessions)
+    .where(and(eq(agentSessions.accountId, accountId), inArray(agentSessions.status, ["PENDING_AUTHORIZATION", "ACTIVE", "REAUTH_REQUIRED"])));
+  const comps = sessions.length ? await ctx.db.select().from(policyCompilations).where(inArray(policyCompilations.sessionId, sessions.map((s) => s.id))) : [];
+  return sessions.map((s) => ({ session: s, compilation: comps.find((c) => c.sessionId === s.id) ?? null }));
 }
 
 export const permissionVersionOf = (c: CompilationRow): PermissionVersion => (c.permissionVersion === 2 ? 2 : 1);

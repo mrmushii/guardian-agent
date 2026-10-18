@@ -30,12 +30,23 @@ await t("SUPABASE_URL + SERVICE_ROLE_KEY", async () => {
   const r = await fetch(`${e.SUPABASE_URL}/rest/v1/`, { headers: { apikey: e.SUPABASE_SERVICE_ROLE_KEY!, authorization: `Bearer ${e.SUPABASE_SERVICE_ROLE_KEY}` } });
   if (!r.ok) throw `HTTP ${r.status}`; return `HTTP ${r.status}`;
 });
-await t("GEMINI_API_KEY + LLM_MODEL", async () => {
-  const r = await fetch("https://generativelanguage.googleapis.com/v1beta/models?pageSize=1000", { headers: { "x-goog-api-key": e.GEMINI_API_KEY! } });
-  const j: any = await r.json(); if (!r.ok) throw `HTTP ${r.status} ${j.error?.message}`;
-  const names = j.models.map((m: any) => m.name.replace("models/", ""));
-  const flash = names.filter((n: string) => n.includes("flash")).join(", ");
-  if (!names.includes(e.LLM_MODEL)) throw `key works, but model "${e.LLM_MODEL}" not available. Flash models: ${flash}`;
-  return `key works, model available`;
-});
+const llm = (provider?: string, model?: string) => async () => {
+  if (provider === "groq") {
+    const r = await fetch("https://api.groq.com/openai/v1/models", { headers: { authorization: `Bearer ${e.GROQ_API_KEY}` } });
+    const j: any = await r.json(); if (!r.ok) throw `HTTP ${r.status} ${j.error?.message}`;
+    const ids: string[] = j.data.map((m: any) => m.id);
+    if (!ids.includes(model!)) throw `key works, but model "${model}" not available. Models: ${ids.join(", ")}`;
+    return `key works, model available`;
+  }
+  if (provider === "gemini") {
+    const r = await fetch("https://generativelanguage.googleapis.com/v1beta/models?pageSize=1000", { headers: { "x-goog-api-key": e.GEMINI_API_KEY! } });
+    const j: any = await r.json(); if (!r.ok) throw `HTTP ${r.status} ${j.error?.message}`;
+    const names = j.models.map((m: any) => m.name.replace("models/", ""));
+    if (!names.includes(model)) throw `key works, but model "${model}" not available. Flash models: ${names.filter((n: string) => n.includes("flash")).join(", ")}`;
+    return `key works, model available`;
+  }
+  throw `no check for provider "${provider}"`;
+};
+await t(`LLM primary (${e.LLM_PROVIDER}:${e.LLM_MODEL})`, llm(e.LLM_PROVIDER, e.LLM_MODEL));
+if (e.LLM_FALLBACK_PROVIDER && e.LLM_FALLBACK_MODEL) await t(`LLM fallback (${e.LLM_FALLBACK_PROVIDER}:${e.LLM_FALLBACK_MODEL})`, llm(e.LLM_FALLBACK_PROVIDER, e.LLM_FALLBACK_MODEL));
 process.exit(0);

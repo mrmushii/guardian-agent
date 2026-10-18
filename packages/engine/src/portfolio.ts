@@ -16,8 +16,13 @@ export interface PortfolioSnapshot {
 export async function readPortfolio(ctx: EngineContext, account: Address, policy: HumanPolicy, opts: { atLeastBlock?: bigint } = {}): Promise<PortfolioSnapshot> {
   const n = ctx.network, c = ctx.publicClient;
   // Load-balanced RPCs can lag a just-included receipt; never value an older block than the caller has seen.
-  const head = await c.getBlockNumber();
-  const blockNumber = opts.atLeastBlock !== undefined && head < opts.atLeastBlock ? opts.atLeastBlock : head;
+  // A lagging node answers "block not found" for a block past its head, so wait for it to catch up (bounded).
+  let blockNumber = await c.getBlockNumber();
+  for (let i = 0; opts.atLeastBlock !== undefined && blockNumber < opts.atLeastBlock; i++) {
+    if (i >= 15) throw new Error(`RPC head ${blockNumber} still behind block ${opts.atLeastBlock}`);
+    await new Promise((r) => setTimeout(r, 1000));
+    blockNumber = await c.getBlockNumber();
+  }
   const [wethWei, usdcRaw, prices] = await Promise.all([
     c.readContract({ address: n.weth, abi: erc20Abi, functionName: "balanceOf", args: [account], blockNumber }),
     c.readContract({ address: n.usdc, abi: erc20Abi, functionName: "balanceOf", args: [account], blockNumber }),

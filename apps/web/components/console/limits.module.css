@@ -1,0 +1,21 @@
+.grid { display: grid; grid-template-columns: minmax(0, 1fr); gap: 18px; align-items: start; }
+@media (min-width: 1100px) { .grid { grid-template-columns: minmax(0, 1fr) minmax(0, 1.1fr); } }
+.fields { display: grid; gap: 18px; }
+.field { display: grid; gap: 6px; }
+.field small { color: var(--ink-3); font-size: 0.78rem; }
+.label { display: flex; justify-content: space-between; font-size: 0.88rem; font-weight: 650; }
+.label b { font-family: var(--font-mono), monospace; color: var(--accent); }
+.dual { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+.pair { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+.money { display: flex; align-items: center; gap: 6px; border: 1px solid var(--glass-border); border-radius: var(--radius-sm); background: var(--glass); padding: 0 10px; }
+.money span { color: var(--ink-3); font-weight: 650; }
+.money input { border: none; background: transparent; padding: 0.6rem 0; -webkit-backdrop-filter: none; backdrop-filter: none; }
+.money input:focus-visible { outline: none; }
+.money:focus-within { outline: 2px solid var(--focus); outline-offset: 2px; }
+.whatif { display: grid; gap: 8px; margin-bottom: 14px; }
+.whatif p { margin: 0; font-size: 1rem; }
+.verdict { justify-self: start; font-size: 0.78rem; font-weight: 750; padding: 4px 12px; border-radius: 999px; }
+.toneQuiet { background: var(--glass-strong); color: var(--ink-2); }
+.toneGood { background: var(--good-wash); color: var(--good); }
+.toneAccent { background: var(--accent-wash); color: var(--accent); }
+.toneWarn { background: var(--warn-wash); color: var(--warn); }

@@ -1,0 +1,51 @@
+.top { display: grid; grid-template-columns: minmax(0, 1fr); gap: 18px; }
+@media (min-width: 980px) { .top { grid-template-columns: minmax(0, 1.1fr) minmax(0, 1fr); } }
+.donutWrap { display: grid; grid-template-columns: 200px minmax(0, 1fr); gap: 20px; align-items: center; position: relative; }
+@media (max-width: 560px) { .donutWrap { grid-template-columns: 1fr; justify-items: center; } }
+.donut { width: 200px; height: 200px; }
+.donutCenter { position: absolute; left: 0; top: 0; width: 200px; height: 200px; display: grid; place-content: center; text-align: center; pointer-events: none; }
+.donutCenter b { font-size: 1.3rem; letter-spacing: -0.02em; }
+.donutCenter span { font-size: 0.72rem; color: var(--ink-3); }
+@media (max-width: 560px) { .donutCenter { left: 50%; transform: translateX(-50%); } }
+.legend { list-style: none; margin: 0; padding: 0; display: grid; gap: 8px; width: 100%; }
+.legend li { display: flex; align-items: center; gap: 8px; font-weight: 600; font-size: 0.9rem; }
+.legend i { width: 10px; height: 10px; border-radius: 3px; }
+.legend span { margin-left: auto; font-family: var(--font-mono), monospace; color: var(--ink-2); font-size: 0.84rem; }
+.kpis { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; }
+.kpis div { padding: 12px; border-radius: var(--radius-md); background: var(--glass); border: 1px solid var(--line); display: grid; gap: 2px; }
+.kpis span { font-size: 0.72rem; color: var(--ink-3); text-transform: uppercase; letter-spacing: 0.05em; font-weight: 650; }
+.kpis b { font-size: 1.35rem; letter-spacing: -0.02em; }
+.table td { vertical-align: middle; }
+.num { text-align: right !important; font-variant-numeric: tabular-nums; }
+.rowBtn { cursor: pointer; transition: background 0.15s; }
+.rowBtn:hover { background: var(--glass); }
+.asset { display: flex; align-items: center; gap: 10px; }
+.asset small { display: block; color: var(--ink-3); font-size: 0.74rem; }
+.logo { width: 32px; height: 32px; border-radius: 50%; display: grid; place-items: center; color: #fff; font-weight: 800; font-size: 0.85rem; flex: none; box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.35); }
+.badge { align-self: flex-start; justify-self: start; display: inline-block; font-size: 0.72rem; font-weight: 750; padding: 3px 10px; border-radius: 999px; white-space: nowrap; }
+.ok { color: var(--good); background: var(--good-wash); }
+.paper { color: var(--accent); background: var(--accent-wash); }
+.bad { color: var(--bad); background: var(--bad-wash); }
+.off { color: var(--ink-3); background: var(--glass-strong); }
+.weight { display: grid; gap: 4px; justify-items: end; }
+.weight i { width: 90px; height: 5px; border-radius: 999px; background: var(--line); overflow: hidden; display: block; }
+.weight i b { display: block; height: 100%; background: linear-gradient(90deg, var(--accent), var(--accent-2)); }
+.checks { list-style: none; margin: 0; padding: 0; display: grid; gap: 8px; }
+.checks li { display: grid; grid-template-columns: 22px 1fr; gap: 8px; padding: 10px; border-radius: var(--radius-sm); background: var(--glass); border: 1px solid var(--line); font-size: 0.86rem; }
+.checks li b { display: block; }
+.checks li span { color: var(--ink-3); font-size: 0.8rem; overflow-wrap: anywhere; }
+.cOk { color: var(--good); } .cOk div { color: var(--ink); }
+.cBad { color: var(--bad); } .cBad div { color: var(--ink); }
+.result { display: grid; gap: 10px; }
+.skeleton, .skelRow { border-radius: var(--radius-md); background: linear-gradient(90deg, var(--glass), var(--glass-strong), var(--glass)); background-size: 200% 100%; animation: shimmer 1.4s infinite; }
+.skeleton { height: 200px; }
+.skelRow { height: 28px; }
+@keyframes shimmer { to { background-position: -200% 0; } }
+.sim { display: block; font-size: 0.7rem; color: var(--accent); font-weight: 650; }
+.track { position: relative; width: 120px !important; height: 6px !important; overflow: visible !important; }
+.track em { position: absolute; top: -2px; bottom: -2px; background: var(--good-wash); border-radius: 4px; }
+.track b { position: relative; z-index: 1; }
+.track u { position: absolute; z-index: 2; top: -4px; bottom: -4px; width: 2px; background: var(--ink); margin-left: -1px; text-decoration: none; }
+.barOut { background: linear-gradient(90deg, var(--warn), var(--bad)) !important; }
+.outTxt { color: var(--bad); font-weight: 750; }
+.weight small { color: var(--ink-3); font-weight: 500; }

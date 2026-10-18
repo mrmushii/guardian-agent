@@ -71,3 +71,4 @@ export const networkByChainId = (chainId: number): NetworkConfig => {
   if (!n) throw new Error(`Unsupported chain ${chainId}`);
   return n;
 };
+export * from "./assets.js";

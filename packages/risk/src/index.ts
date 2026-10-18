@@ -12,6 +12,8 @@ export interface RiskInput {
   requestedUsdCents: bigint;
   dailyBudgetUsdCents: bigint;
   maxDivergenceBps: number;
+  /** Decimals of the traded asset (default WETH, 18); `wethWei`/`poolWethReserve` are in its units. */
+  assetDecimals?: number;
 }
 export interface RiskResult {
   score: number;
@@ -30,7 +32,7 @@ const bpsDiff = (a: bigint, b: bigint) => Number(((a > b ? a - b : b - a) * 10_0
 export function assessRisk(r: RiskInput): RiskResult {
   const cfg = GUARDIAN_CONFIG;
   // Execution price (USD per WETH, 8dp) implied by the quote, valued at the USDC oracle price. Same for both directions.
-  const quoteUsd8 = (r.usdcRaw * r.usdcUsd.answer * 10n ** BigInt(WETH_DECIMALS + 8)) / (r.wethWei * 10n ** BigInt(6 + r.usdcUsd.decimals));
+  const quoteUsd8 = (r.usdcRaw * r.usdcUsd.answer * 10n ** BigInt((r.assetDecimals ?? WETH_DECIMALS) + 8)) / (r.wethWei * 10n ** BigInt(6 + r.usdcUsd.decimals));
   const oracleUsd8 = (r.wethUsd.answer * 10n ** 8n) / 10n ** BigInt(r.wethUsd.decimals);
   const divergenceBps = bpsDiff(quoteUsd8, oracleUsd8);
   const usdcDeviationBps = bpsDiff(r.usdcUsd.answer, 10n ** BigInt(r.usdcUsd.decimals));

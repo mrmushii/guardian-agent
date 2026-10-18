@@ -13,7 +13,7 @@ export class OracleError extends Error {
   constructor(public code: "STALE" | "INVALID" | "SEQUENCER_DOWN" | "SEQUENCER_GRACE", message: string) { super(message); }
 }
 
-async function readFeed(client: PublicClient, feed: Address, maxAgeSec: number, now: number): Promise<FeedReading> {
+export async function readFeed(client: PublicClient, feed: Address, maxAgeSec: number, now = Math.floor(Date.now() / 1000)): Promise<FeedReading> {
   const [decimals, [, answer, , updatedAt]] = await Promise.all([
     client.readContract({ address: feed, abi: feedAbi, functionName: "decimals" }),
     client.readContract({ address: feed, abi: feedAbi, functionName: "latestRoundData" }),

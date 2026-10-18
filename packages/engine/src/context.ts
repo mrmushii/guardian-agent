@@ -3,7 +3,18 @@ import { base, baseSepolia } from "viem/chains";
 import { networkByChainId, type NetworkConfig } from "@guardian/chain";
 import { createDb, type Db } from "@guardian/db";
 import { keyringFromEnv, type Keyring } from "@guardian/account";
-import { GeminiModel, OpenAIModel, type AgentModel } from "@guardian/agent";
+import { GeminiModel, GroqModel, OpenAIModel, type AgentModel } from "@guardian/agent";
+
+/** LLM_PROVIDER / LLM_FALLBACK_PROVIDER: groq | gemini | openai. A provider without its key or model is skipped. */
+function modelFor(provider: string | undefined, model: string | undefined, env: NodeJS.ProcessEnv): AgentModel | null {
+  if (!provider || !model) return null;
+  switch (provider.toLowerCase()) {
+    case "groq": return env.GROQ_API_KEY ? new GroqModel(env.GROQ_API_KEY, model) : null;
+    case "gemini": return env.GEMINI_API_KEY ? new GeminiModel(env.GEMINI_API_KEY, model) : null;
+    case "openai": return env.OPENAI_API_KEY ? new OpenAIModel(env.OPENAI_API_KEY, model) : null;
+    default: throw new Error(`Unknown LLM provider "${provider}" (use groq, gemini or openai)`);
+  }
+}
 
 export interface EngineContext {
   db: Db;
@@ -27,9 +38,10 @@ export function createEngineContext(env: NodeJS.ProcessEnv = process.env): Engin
   const rpc = chainId === 8453 ? env.BASE_MAINNET_RPC_URL : env.BASE_SEPOLIA_RPC_URL;
   const need = (k: string, v?: string) => { if (!v) throw new Error(`${k} is required`); return v; };
   const { db, close } = createDb(need("DATABASE_URL", env.DATABASE_URL));
-  const models: AgentModel[] = [];
-  if (env.GEMINI_API_KEY && env.LLM_MODEL) models.push(new GeminiModel(env.GEMINI_API_KEY, env.LLM_MODEL));
-  if (env.OPENAI_API_KEY && env.LLM_FALLBACK_MODEL) models.push(new OpenAIModel(env.OPENAI_API_KEY, env.LLM_FALLBACK_MODEL));
+  const models = [
+    modelFor(env.LLM_PROVIDER ?? "groq", env.LLM_MODEL, env),
+    modelFor(env.LLM_FALLBACK_PROVIDER, env.LLM_FALLBACK_MODEL, env),
+  ].filter((m): m is AgentModel => !!m);
   return {
     db, chain, network: networkByChainId(chainId),
     publicClient: createPublicClient({ chain, transport: http(need("RPC URL", rpc)) }) as PublicClient,

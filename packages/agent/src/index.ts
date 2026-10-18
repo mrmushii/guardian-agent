@@ -65,7 +65,12 @@ export interface AgentContext {
 export interface AgentModel {
   readonly name: string;
   decide(context: AgentContext): Promise<unknown>;
+  /** General structured call (owner chat, summaries): returns parsed JSON matching `schema`; callers validate. */
+  ask?(system: string, user: string, schema: JsonSchema): Promise<Record<string, unknown>>;
 }
+
+/** Minimal JSON-schema shape used for structured output. Strict mode: every property listed in `required`. */
+export type JsonSchema = { type: "object"; properties: Record<string, unknown>; required: string[]; additionalProperties?: boolean };
 
 const SYSTEM = `You are Guardian, the decision layer of a WETH/USDC rebalancing wallet.
 You choose one of: REBALANCE, WAIT, ESCALATE, NO_ACTION. Deterministic code computes every amount, address, calldata, gas and signature; you cannot transfer funds or change limits.
@@ -112,39 +117,76 @@ async function fetchWithRetry(url: string, init: RequestInit & { timeoutMs: numb
 export class GeminiModel implements AgentModel {
   readonly name: string;
   constructor(private apiKey: string, private model: string, private timeoutMs = 20_000) { this.name = `gemini:${model}`; }
-  async decide(context: AgentContext): Promise<unknown> {
+  async ask(system: string, user: string, schema: unknown, temperature = 0.3): Promise<Record<string, unknown>> {
     const res = await fetchWithRetry(`https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(this.model)}:generateContent`, {
       method: "POST", timeoutMs: this.timeoutMs,
       headers: { "content-type": "application/json", "x-goog-api-key": this.apiKey },
       body: JSON.stringify({
-        systemInstruction: { parts: [{ text: SYSTEM }] },
-        contents: [{ role: "user", parts: [{ text: JSON.stringify(context) }] }],
-        generationConfig: { temperature: 0, responseMimeType: "application/json", responseJsonSchema: RESPONSE_SCHEMA },
+        systemInstruction: { parts: [{ text: system }] },
+        contents: [{ role: "user", parts: [{ text: user }] }],
+        generationConfig: { temperature, responseMimeType: "application/json", responseJsonSchema: schema },
       }),
     });
     if (!res.ok) throw new Error(`Gemini HTTP ${res.status}`);
     const body = (await res.json()) as { candidates?: { content?: { parts?: { text?: string }[] } }[] };
     const text = body.candidates?.[0]?.content?.parts?.map((p) => p.text ?? "").join("") ?? "";
-    return normalize(JSON.parse(text) as Record<string, unknown>);
+    return JSON.parse(text) as Record<string, unknown>;
+  }
+  async decide(context: AgentContext): Promise<unknown> {
+    return normalize(await this.ask(SYSTEM, JSON.stringify(context), RESPONSE_SCHEMA, 0));
   }
 }
 
-export class OpenAIModel implements AgentModel {
+/** Strict JSON-schema output: every property required, optional ones nullable (strict-mode rule). */
+const STRICT_SCHEMA = {
+  type: "object", additionalProperties: false,
+  properties: {
+    decision: RESPONSE_SCHEMA.properties.decision,
+    targetWethWeight: { type: ["number", "null"] },
+    recheckMinutes: { type: ["integer", "null"] },
+    reason: { type: "string" },
+  },
+  required: ["decision", "targetWethWeight", "recheckMinutes", "reason"],
+};
+
+/** Chat-completions adapter for OpenAI-compatible APIs (OpenAI, Groq). */
+export class OpenAICompatibleModel implements AgentModel {
   readonly name: string;
-  constructor(private apiKey: string, private model: string, private timeoutMs = 20_000) { this.name = `openai:${model}`; }
-  async decide(context: AgentContext): Promise<unknown> {
-    const res = await fetchWithRetry("https://api.openai.com/v1/chat/completions", {
-      method: "POST", timeoutMs: this.timeoutMs,
+  constructor(private label: string, private url: string, private apiKey: string, private model: string,
+    private opts: { strictSchema?: boolean; timeoutMs?: number } = {}) { this.name = `${label.toLowerCase()}:${model}`; }
+
+  private request(system: string, user: string, responseFormat: unknown, temperature: number) {
+    return fetchWithRetry(this.url, {
+      method: "POST", timeoutMs: this.opts.timeoutMs ?? 20_000,
       headers: { "content-type": "application/json", authorization: `Bearer ${this.apiKey}` },
-      body: JSON.stringify({
-        model: this.model, temperature: 0, response_format: { type: "json_object" },
-        messages: [{ role: "system", content: SYSTEM + "\nRespond with a JSON object {decision, targetWethWeight?, recheckMinutes?, reason}." }, { role: "user", content: JSON.stringify(context) }],
-      }),
+      body: JSON.stringify({ model: this.model, temperature, response_format: responseFormat, messages: [{ role: "system", content: system }, { role: "user", content: user }] }),
     });
-    if (!res.ok) throw new Error(`OpenAI HTTP ${res.status}`);
-    const body = (await res.json()) as { choices?: { message?: { content?: string } }[] };
-    return normalize(JSON.parse(body.choices?.[0]?.message?.content ?? "") as Record<string, unknown>);
   }
+
+  async ask(system: string, user: string, schema: JsonSchema, temperature = 0.3): Promise<Record<string, unknown>> {
+    let res = this.opts.strictSchema
+      ? await this.request(system, user, { type: "json_schema", json_schema: { name: "response", strict: true, schema } }, temperature)
+      : await this.request(system, user, { type: "json_object" }, temperature);
+    // Models without structured-output support reject json_schema with 400; JSON mode output is still validated by the caller.
+    if (this.opts.strictSchema && res.status === 400) res = await this.request(system, user, { type: "json_object" }, temperature);
+    if (!res.ok) throw new Error(`${this.label} HTTP ${res.status}`);
+    const body = (await res.json()) as { choices?: { message?: { content?: string } }[] };
+    const raw = JSON.parse(body.choices?.[0]?.message?.content ?? "") as Record<string, unknown>;
+    for (const k of Object.keys(raw)) if (raw[k] === null) delete raw[k];
+    return raw;
+  }
+
+  async decide(context: AgentContext): Promise<unknown> {
+    return normalize(await this.ask(SYSTEM + "\nRespond with a JSON object {decision, targetWethWeight?, recheckMinutes?, reason}.", JSON.stringify(context), STRICT_SCHEMA as JsonSchema, 0));
+  }
+}
+
+export class OpenAIModel extends OpenAICompatibleModel {
+  constructor(apiKey: string, model: string, timeoutMs = 20_000) { super("OpenAI", "https://api.openai.com/v1/chat/completions", apiKey, model, { timeoutMs }); }
+}
+
+export class GroqModel extends OpenAICompatibleModel {
+  constructor(apiKey: string, model: string, timeoutMs = 20_000) { super("Groq", "https://api.groq.com/openai/v1/chat/completions", apiKey, model, { strictSchema: true, timeoutMs }); }
 }
 
 /** Primary then fallback; returns the first validated decision, or the errors from each provider. */
@@ -170,3 +212,4 @@ export const DETERMINISTIC_FALLBACK = "deterministic-fallback";
  */
 export const deterministicDecision = (targetEthPct: number): AgentDecision =>
   ({ decision: "REBALANCE", targetWethWeight: targetEthPct / 100, reason: "AI unavailable — rule-based rebalance to your policy target" });
+export * from "./chat.js";

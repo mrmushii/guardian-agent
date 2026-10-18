@@ -1,45 +1,29 @@
 "use client";
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { createSiweMessage } from "viem/siwe";
 import type { Address, Hex } from "viem";
 import { connectWallet, signRaw, signText } from "./wallet";
-import s from "./Dashboard.module.css";
+import s from "./console/console.module.css";
+import sh from "./console/shell.module.css";
+import { agentMode, api, short, type Dash, type Ev } from "./console/model";
+import { AgentOrb, StatusHero, YourTasks, type Ctl } from "./console/Hero";
+import { AgentThinking } from "./console/Thinking";
+import { Guardrails } from "./console/Guardrails";
+import { SimulatePanel } from "./console/Interact";
+import { History } from "./console/History";
+import { Onboarding, seenOnboarding } from "./console/Onboarding";
+import { CommandPalette, Sidebar, VIEWS, type Command, type View } from "./console/Shell";
+import { AllocationChart, DailyBrief, type Brief, type Point } from "./console/Insights";
+import { AgentChat, proactiveFrom, type Msg } from "./console/AgentChat";
+import { LimitsEditor } from "./console/Limits";
+import { Icon } from "./console/icons";
+import { PortfolioView } from "./console/Portfolio";
+import { TargetEditor } from "./console/Targets";
 
-type Dash = {
-  network: { chainId: number; name: string; isTestnet: boolean };
-  identities: { masterOwner: string; smartAccount: string; entryPoint: string; kernelVersion: string; sessionSigner: string | null };
-  monitoring: { enabled: boolean; pausedReason: string | null };
-  policy: { ethMinPct: number; ethMaxPct: number; targetEthPct: number; maxAutoTxUsd: number; dailyBudgetUsd: number; maxSlippageBps: number } | null;
-  session: { status: string; onChain: string; permissionId: string; validUntil: string; authorizeUserOpHash: string | null } | null;
-  compiled: { twoWay: boolean; maxAmountInWei: string; maxUsdcInRaw: string | null; windowSec: number | null; opsInWindow: number | null; maxOps: number; opsUsed: number | null; allowanceWei: string; authPrice: number; bufferBps: number; reauthAtPrice: number } | null;
-  budget: { day: string; usedCents: string; budgetCents: number };
-  portfolio: { wethUsd: string; usdcUsd: string; totalUsd: string; wethWeightPct: number; assessment: string; ethUsd: number; block: string } | { error: string };
-  actions: { id: string; state: string; tier: string | null; reasons: string[] | null; plan: { direction?: string; wethWei?: string; limitRaw?: string; targetPct?: number; clamped?: boolean } | null; requestedUsdCents: string | null; createdAt: string; error: string | null; decision: { decision: string; reason: string } | null }[];
-  outcomes: { agentConfirmed: number; masterConfirmed: number; waiting: number; blocked: number; stopped: number; noAction: number };
-  operations: { id: string; authority: string; purpose: string; state: string; userOpHash: string | null; transactionHash: string | null; block: string | null; userOpSuccess: boolean | null; explorer: string | null; createdAt: string }[];
-  pendingSignatures: { id: string; purpose: string; userOpHash: string; actionId: string | null }[];
-};
-type Ev = { id: string; type: string; level: "INFO" | "SUCCESS" | "WARNING" | "FAILURE"; message: string; data: Record<string, unknown> | null; createdAt: string; actionId: string | null };
-
-const api = async <T,>(path: string, body?: unknown): Promise<T> => {
-  const r = await fetch(path, body === undefined ? { cache: "no-store" } : { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(body) });
-  const j = await r.json();
-  if (!r.ok) throw Object.assign(new Error(j.error ?? `Request failed (${r.status})`), { status: r.status });
-  return j as T;
-};
-const short = (a?: string | null) => (a ? `${a.slice(0, 6)}…${a.slice(-4)}` : "—");
-const weth = (wei?: string) => (wei ? (Number(wei) / 1e18).toFixed(6) : "—");
-const usdcFmt = (raw?: string | null) => (raw ? (Number(raw) / 1e6).toFixed(2) : "—");
-const time = (iso: string) => new Date(iso).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", second: "2-digit", hour12: false });
-
-/** Lifecycle shown as a rail; the current step of the latest action is highlighted. */
-const RAIL = ["TRIGGERED", "PLANNING", "SIMULATING", "SUBMITTING", "PENDING", "CONFIRMED"] as const;
-const STATE_LABEL: Record<string, string> = {
-  TRIGGERED: "Triggered", PLANNING: "Planning", SIMULATING: "Simulating", SUBMITTING: "Submitting", PENDING: "Waiting for inclusion", CONFIRMED: "Confirmed",
-  PENDING_APPROVAL: "Waiting for your approval", REVALIDATING: "Revalidating", MASTER_SIGNING: "Waiting for your signature", REJECTED: "Rejected by policy",
-  FAILED: "Stopped", EXECUTION_FAILED: "Swap reverted", NO_ACTION: "No action needed", WAIT: "Agent waiting", CANCELLED: "Cancelled",
-};
-const TIER_LABEL: Record<string, string> = { TIER1_AGENT: "Agent session", TIER2_MASTER: "Master approval", TIER3_REJECT: "Prohibited" };
+type Theme = "dark" | "light" | null;
+const THEME_KEY = "guardian.theme";
+const HIDDEN_EVENTS = new Set(["CHAT_Q", "CHAT_A"]);
+const viewFromHash = (): View => { const h = typeof location === "undefined" ? "" : location.hash.slice(1); return (VIEWS.some((v) => v.id === h) ? h : "overview") as View; };
 
 export default function Dashboard() {
   const [dash, setDash] = useState<Dash | null>(null);
@@ -47,30 +31,97 @@ export default function Dashboard() {
   const [needsLogin, setNeedsLogin] = useState(false);
   const [busy, setBusy] = useState<string | null>(null);
   const [notice, setNotice] = useState<{ kind: "ok" | "err"; text: string } | null>(null);
-  const [message, setMessage] = useState("");
+  const [help, setHelp] = useState(false);
+  const [theme, setTheme] = useState<Theme>(null);
+  const [view, setViewState] = useState<View>("overview");
+  const [palette, setPalette] = useState(false);
+  const [insights, setInsights] = useState<{ history: Point[]; brief: Brief } | null>(null);
+  const [proactive, setProactive] = useState<Msg[]>([]);
+  const [unread, setUnread] = useState(0);
+  const [pendingAsk, setPendingAsk] = useState<string | null>(null);
   const cursor = useRef("0");
+  const live = useRef(false);
+  const viewRef = useRef<View>("overview");
+  const capRef = useRef(10);
 
-  const load = useCallback(async () => {
-    try {
-      setDash(await api<Dash>("/api/dashboard"));
-      const { events: fresh } = await api<{ events: Ev[] }>(`/api/timeline?after=${cursor.current}`);
-      if (fresh.length) {
-        cursor.current = fresh[0]!.id;
-        setEvents((prev) => [...fresh, ...prev].slice(0, 400));
-      }
-      setNeedsLogin(false);
-    } catch (e) {
+  const setView = useCallback((v: View) => { setViewState(v); viewRef.current = v; if (location.hash.slice(1) !== v) history.replaceState(null, "", `#${v}`); }, []);
+  useEffect(() => { const v = viewFromHash(); setViewState(v); viewRef.current = v; const on = () => setView(viewFromHash()); addEventListener("hashchange", on); return () => removeEventListener("hashchange", on); }, [setView]);
+
+  /** Merge new audit events (oldest-first or newest-first input) and turn notable ones into proactive agent messages. */
+  const ingest = useCallback((incoming: Ev[], announce: boolean) => {
+    const fresh = incoming.filter((e) => !HIDDEN_EVENTS.has(e.type));
+    if (incoming.length) {
+      const maxId = incoming.reduce((m, e) => (BigInt(e.id) > BigInt(m) ? e.id : m), cursor.current);
+      cursor.current = maxId;
+    }
+    if (!fresh.length) return;
+    setEvents((prev) => { const seen = new Set(prev.map((e) => e.id)); return [...fresh.filter((e) => !seen.has(e.id)).sort((a, b) => Number(BigInt(b.id) - BigInt(a.id))), ...prev].slice(0, 500); });
+    if (announce) {
+      const msgs = fresh.map((e) => proactiveFrom(e, capRef.current)).filter((m): m is Msg => !!m);
+      if (msgs.length) { setProactive((p) => [...p, ...msgs]); if (viewRef.current !== "agent") setUnread((n) => n + msgs.length); }
+    }
+  }, []);
+
+  const loadDash = useCallback(async (fresh = false) => {
+    try { const d = await api<Dash>(`/api/dashboard${fresh ? "?fresh" : ""}`); capRef.current = d.policy?.maxAutoTxUsd ?? 10; setDash(d); setNeedsLogin(false); }
+    catch (e) {
       const status = (e as { status?: number }).status;
       if (status === 401) setNeedsLogin(true);
       else if (status === 404) setNotice({ kind: "err", text: (e as Error).message });
     }
   }, []);
+  const loadEvents = useCallback(async (announce: boolean) => {
+    try { const { events: more } = await api<{ events: Ev[] }>(`/api/timeline?after=${cursor.current}`); ingest(more, announce); } catch { /* next poll retries */ }
+  }, [ingest]);
+  const loadInsights = useCallback(async () => { try { setInsights(await api("/api/insights")); } catch { /* optional panel */ } }, []);
+  const load = useCallback(async (fresh = false) => { await loadDash(fresh); if (!live.current) await loadEvents(true); }, [loadDash, loadEvents]);
 
-  useEffect(() => { void load(); const t = setInterval(load, 4000); return () => clearInterval(t); }, [load]);
+  // Initial load, then dashboard polling; events come from the live stream when available.
+  useEffect(() => {
+    let stop = false;
+    void (async () => { await loadDash(); await loadEvents(false); void loadInsights(); })();
+    const t = setInterval(() => { if (!stop) void load(); }, 4000);
+    const ti = setInterval(() => { if (!stop) void loadInsights(); }, 60_000);
+    return () => { stop = true; clearInterval(t); clearInterval(ti); };
+  }, [load, loadDash, loadEvents, loadInsights]);
 
-  const run = async (label: string, fn: () => Promise<string | void>) => {
+  useEffect(() => {
+    if (!dash || needsLogin) return;
+    let es: EventSource | null = null, refresh: ReturnType<typeof setTimeout> | undefined;
+    try {
+      es = new EventSource(`/api/stream?after=${cursor.current}`);
+      es.onopen = () => { live.current = true; };
+      es.onmessage = (m) => {
+        const rows = JSON.parse(m.data) as Ev[];
+        ingest(rows, true);
+        clearTimeout(refresh);
+        refresh = setTimeout(() => { void loadDash(); if (rows.some((r) => r.type === "CONFIRMED")) void loadInsights(); }, 400);
+      };
+      es.onerror = () => { live.current = false; };
+    } catch { live.current = false; }
+    return () => { es?.close(); live.current = false; clearTimeout(refresh); };
+  }, [!!dash, needsLogin]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  useEffect(() => {
+    try { const t = localStorage.getItem(THEME_KEY) as Theme; if (t) { setTheme(t); document.documentElement.dataset.theme = t; } } catch { /* storage unavailable */ }
+  }, []);
+  useEffect(() => { if (dash && !seenOnboarding()) setHelp(true); }, [!!dash]); // eslint-disable-line react-hooks/exhaustive-deps
+  useEffect(() => { if (notice?.kind !== "ok") return; const t = setTimeout(() => setNotice(null), 6000); return () => clearTimeout(t); }, [notice]);
+  useEffect(() => {
+    const on = (e: KeyboardEvent) => { if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === "k") { e.preventDefault(); setPalette((o) => !o); } };
+    addEventListener("keydown", on); return () => removeEventListener("keydown", on);
+  }, []);
+
+  const toggleTheme = useCallback(() => {
+    const dark = theme ? theme === "dark" : !matchMedia("(prefers-color-scheme: light)").matches;
+    const next: Theme = dark ? "light" : "dark";
+    setTheme(next); document.documentElement.dataset.theme = next;
+    try { localStorage.setItem(THEME_KEY, next); } catch { /* storage unavailable */ }
+  }, [theme]);
+
+  const run: Ctl["run"] = async (label, fn) => {
     setBusy(label); setNotice(null);
-    try { const text = await fn(); if (text) setNotice({ kind: "ok", text }); await load(); }
+    try { const text = await fn(); if (text) setNotice({ kind: "ok", text }); await load(true); }
     catch (e) { setNotice({ kind: "err", text: (e as Error).message.split("\n")[0]! }); }
     finally { setBusy(null); }
   };
@@ -80,237 +131,153 @@ export default function Dashboard() {
     const { nonce, chainId } = await api<{ nonce: string; chainId: number }>("/api/auth/nonce", { address });
     const msg = createSiweMessage({ address, chainId, domain: location.host, nonce, uri: location.origin, version: "1", statement: "Sign in to Guardian as the wallet owner." });
     await api("/api/auth/verify", { message: msg, signature: await signText(address, msg) });
-    return "Signed in";
+    await loadEvents(false); void loadInsights();
   });
 
   /** Master operations: the server prepares, the owner's wallet signs the exact userOpHash, the server verifies and submits. */
-  const masterSign = async (prepared: { userOperationId: string; userOpHash: Hex }, done: string) => {
+  const masterSign: Ctl["masterSign"] = async (prepared: { userOperationId: string; userOpHash: Hex }, done: string) => {
     const address = await connectWallet();
     if (dash && address.toLowerCase() !== dash.identities.masterOwner.toLowerCase())
       throw new Error(`Switch your wallet to the master owner ${short(dash.identities.masterOwner)} to sign`);
     const signature = await signRaw(address as Address, prepared.userOpHash);
     const { userOpHash } = await api<{ userOpHash: string }>(`/api/signatures/${prepared.userOperationId}`, { signature });
-    return `${done} — UserOperation ${short(userOpHash)} submitted`;
+    return `${done} — operation ${short(userOpHash)} submitted`;
   };
+
+  const pause = () => dash && run("monitor", async () => { await api("/api/monitoring", { enabled: !dash.monitoring.enabled }); return dash.monitoring.enabled ? "Agent paused" : "Agent resumed"; });
+  const evaluate = () => run("ask", async () => {
+    const r = await api<{ skipped?: string }>("/api/evaluate", {});
+    return r.skipped === "COOLDOWN" ? "In cooldown after a recent trade — try again in a few minutes." : r.skipped ? `Skipped: ${r.skipped.replaceAll("_", " ").toLowerCase()}` : "Checking now — watch Agent thinking.";
+  });
+  const simulate = (direction: "up" | "down", usd: number) => run(`sim-${direction}-${usd}`, async () => {
+    const r = await api<{ how: string }>("/api/simulate", { direction, usd });
+    setView("overview");
+    return `Demo wallet ${r.how}. Watch the agent react.`;
+  });
+
+  const commands: Command[] = useMemo(() => {
+    if (!dash) return [];
+    const c: Command[] = [
+      ...VIEWS.map((v) => ({ id: `go-${v.id}`, label: `Go to ${v.label}`, icon: v.icon, run: () => setView(v.id), keywords: "open view navigate" })),
+      { id: "check", label: "Check portfolio now", hint: "run the agent", icon: "bolt", run: () => void evaluate(), keywords: "evaluate rebalance" },
+      { id: "pause", label: dash.monitoring.enabled ? "Pause agent" : "Resume agent", icon: dash.monitoring.enabled ? "pause" : "play", run: () => void pause(), keywords: "stop start monitoring" },
+      { id: "limits", label: "Edit limits", icon: "limits", run: () => setView("limits"), keywords: "policy band target budget cap" },
+      { id: "ask-why", label: "Ask: why did you trade last time?", icon: "agent", run: () => { setPendingAsk("Why did you trade last time?"); setView("agent"); } },
+      { id: "ask-how", label: "Ask: how is my portfolio doing?", icon: "agent", run: () => { setPendingAsk("How is my portfolio doing?"); setView("agent"); } },
+      { id: "theme", label: "Toggle light / dark theme", icon: "sun", run: toggleTheme, keywords: "appearance" },
+      { id: "help", label: "How Guardian works", icon: "help", run: () => setHelp(true), keywords: "onboarding guide" },
+    ];
+    if (dash.network.isTestnet && dash.demo.enabled) c.push(
+      { id: "sim-up", label: "Simulate: WETH up $5", hint: "testnet", icon: "up", run: () => void simulate("up", 5), keywords: "demo market move" },
+      { id: "sim-down", label: "Simulate: WETH down $5", hint: "testnet", icon: "down", run: () => void simulate("down", 5), keywords: "demo market move" },
+    );
+    return c;
+  }, [dash, toggleTheme]); // eslint-disable-line react-hooks/exhaustive-deps
 
   if (needsLogin) return (
     <main className={s.login}>
-      <h1>Guardian</h1>
-      <p>An AI agent that rebalances your WETH/USDC portfolio, inside limits your smart account enforces on its own.</p>
-      <button className="primary" onClick={signIn} disabled={busy === "signin"}>{busy === "signin" ? "Waiting for wallet…" : "Sign in with owner wallet"}</button>
-      {notice && <p className={notice.kind === "err" ? s.err : s.ok} role="status">{notice.text}</p>}
+      <div className={`glass ${s.loginCard}`}>
+        <AgentOrb mode="watching" large />
+        <h1>Guardian Agent</h1>
+        <p>An AI agent that keeps your WETH/USDC portfolio in balance — inside limits your own smart account enforces.</p>
+        <div className={s.features}>
+          <div className={s.feature}><Icon name="limits" /> <span>You set the limits. The agent can't exceed them, even if tricked.</span></div>
+          <div className={s.feature}><Icon name="agent" /> <span>Talk to it: it explains every decision in plain language.</span></div>
+          <div className={s.feature}><Icon name="hand" /> <span>Bigger trades wait for your signature. Pause or revoke anytime.</span></div>
+        </div>
+        <button className="primary" onClick={signIn} disabled={busy === "signin"} style={{ width: "100%" }}>{busy === "signin" ? "Waiting for wallet…" : "Sign in with owner wallet"}</button>
+        {notice && <p className={notice.kind === "err" ? s.toastErr : s.toastOk} role="status">{notice.text}</p>}
+      </div>
     </main>
   );
-  if (!dash) return <main className={s.loadingPage}><p className="muted">Loading account…</p>{notice && <p className={s.err}>{notice.text}</p>}</main>;
+  if (!dash) return <main className={s.loading}><div style={{ textAlign: "center" }}><AgentOrb mode="thinking" large /><p className="muted">Waking up your agent…</p>{notice && <p className={s.toastErr}>{notice.text}</p>}</div></main>;
 
-  const p = "error" in dash.portfolio ? null : dash.portfolio;
-  const pol = dash.policy;
-  const latest = dash.actions[0];
-  const pending = dash.actions.filter((a) => a.state === "PENDING_APPROVAL" || a.state === "MASTER_SIGNING");
-  const sessionLive = dash.session?.onChain === "ACTIVE";
-  const usedUsd = Number(dash.budget.usedCents) / 100;
-  const c = dash.compiled;
-  // v2: ops per resetting window (DB view of what the chain enforces); v1: ops per session (EntryPoint nonce).
-  const opsLeft = c?.twoWay ? (c.opsInWindow == null ? null : Math.max(0, c.maxOps - c.opsInWindow))
-    : c?.opsUsed == null ? null : Math.max(0, c.maxOps - c.opsUsed);
-  const windowHours = c?.windowSec ? c.windowSec / 3600 : null;
-  const o = dash.outcomes;
+  const mode = agentMode(dash);
+  const ctl: Ctl = { dash, busy, run, masterSign };
+  const head = (title: string, sub: string, right?: React.ReactNode) => (
+    <div className={sh.viewHead}><div><h1 className={sh.viewTitle}>{title}</h1><p className={sh.viewSub}>{sub}</p></div>{right}</div>
+  );
 
   return (
-    <div className={s.page}>
-      <header className={s.header}>
-        <div className={s.brand}><strong>Guardian</strong><span className="hash">{short(dash.identities.smartAccount)}</span></div>
-        <div className={s.headerRight}>
-          <span className={dash.network.isTestnet ? s.netTest : s.netMain}>{dash.network.name}{dash.network.isTestnet ? " · test funds only" : ""}</span>
-          <button onClick={() => run("monitor", async () => { await api("/api/monitoring", { enabled: !dash.monitoring.enabled }); })} disabled={!!busy}>
-            {dash.monitoring.enabled ? "Pause agent" : "Resume agent"}
-          </button>
-        </div>
-      </header>
-      {notice && <p className={`${s.notice} ${notice.kind === "err" ? s.err : s.ok}`} role="status">{notice.text}</p>}
-      {!dash.monitoring.enabled && <p className={`${s.notice} ${s.warn}`}>Autonomous actions are paused{dash.monitoring.pausedReason ? ` (${dash.monitoring.pausedReason.replaceAll("_", " ").toLowerCase()})` : ""}. Pending operations are still tracked.</p>}
+    <div className={sh.app}>
+      <Sidebar dash={dash} mode={mode} view={view} setView={(v) => { setView(v); if (v === "agent") setUnread(0); }} onPause={() => void pause()} busy={!!busy} onPalette={() => setPalette(true)} unread={unread} />
+      <main className={sh.main}>
+        {notice && <p className={`glass ${s.toast} ${notice.kind === "err" ? s.toastErr : s.toastOk}`} role="status">{notice.text}</p>}
 
-      <section className={s.hero} aria-label="WETH allocation">
-        <div className={s.heroFigure}>
-          <span className={s.bigPct}>{p ? `${p.wethWeightPct.toFixed(2)}%` : "—"}</span>
-          <span className={s.heroCaption}>of the portfolio is WETH{p ? ` · $${p.totalUsd} total at ETH $${p.ethUsd.toFixed(2)}` : ""}</span>
-        </div>
-        {pol && (
-          <div className={s.fenceWrap}>
-            <div className={s.targetLabel} style={{ left: `${pol.targetEthPct}%` }}>target {pol.targetEthPct}%</div>
-            <div className={s.fence} role="img" aria-label={`Allowed band ${pol.ethMinPct} to ${pol.ethMaxPct} percent, target ${pol.targetEthPct}, current ${p?.wethWeightPct ?? "unknown"}`}>
-              <div className={s.band} style={{ left: `${pol.ethMinPct}%`, width: `${pol.ethMaxPct - pol.ethMinPct}%` }} />
-              <div className={s.target} style={{ left: `${pol.targetEthPct}%` }} />
-              {p && <div className={`${s.marker} ${p.wethWeightPct > pol.ethMaxPct || p.wethWeightPct < pol.ethMinPct ? s.markerOut : ""}`} style={{ left: `${Math.min(100, Math.max(0, p.wethWeightPct))}%` }} />}
+        {view === "overview" && <>
+          <StatusHero dash={dash} />
+          <div className={s.grid}>
+            <div className={s.col}>
+              <YourTasks {...ctl} />
+              <AgentThinking dash={dash} events={events} />
             </div>
-            <div className={s.fenceScale}><span>0%</span><span style={{ left: `${pol.ethMinPct}%` }}>{pol.ethMinPct}%</span><span style={{ left: `${pol.ethMaxPct}%` }}>{pol.ethMaxPct}%</span><span>100%</span></div>
-            <p className={s.heroStatus}>
-              {!p ? `Portfolio unavailable: ${"error" in dash.portfolio ? dash.portfolio.error : ""}`
-                : p.assessment === "SELL_WETH" ? `Above the ${pol.ethMaxPct}% limit. The agent sells WETH back toward its target.`
-                : p.assessment === "BUY_WETH" ? `Below the ${pol.ethMinPct}% limit. The agent buys WETH back toward its target.`
-                : "Inside the allowed band. Nothing to do."}
-              {p && <> WETH ${p.wethUsd} · USDC ${p.usdcUsd}</>}
-            </p>
+            <div className={s.col}>
+              <DailyBrief brief={insights?.brief ?? null} loading={!insights} />
+              <Guardrails {...ctl} onEdit={() => setView("limits")} />
+            </div>
           </div>
-        )}
-      </section>
-
-      <div className={s.grid}>
-        <div className={s.main}>
-          <section className={s.panel} aria-label="Current progress">
-            <h2>Current action</h2>
-            {!latest ? <p className="muted">No actions yet. The agent starts when WETH rises above {pol?.ethMaxPct ?? 55}%.</p> : (
-              <>
-                <ol className={s.rail}>
-                  {RAIL.map((st) => {
-                    const idx = RAIL.indexOf(latest.state as (typeof RAIL)[number]);
-                    const here = RAIL.indexOf(st);
-                    const cls = idx === -1 ? "" : here < idx ? s.done : here === idx ? s.now : "";
-                    return <li key={st} className={cls}>{STATE_LABEL[st]}</li>;
-                  })}
-                </ol>
-                <p className={s.railNote}>
-                  <span className={s[`state_${latest.state}`] ?? ""}>{STATE_LABEL[latest.state] ?? latest.state}</span>
-                  {latest.tier && <> · authority: {TIER_LABEL[latest.tier] ?? latest.tier}</>}
-                  {latest.requestedUsdCents && <> · sale ≈ ${(Number(latest.requestedUsdCents) / 100).toFixed(2)}</>}
-                  {latest.reasons?.length ? <> · {latest.reasons.join(", ").replaceAll("_", " ").toLowerCase()}</> : null}
-                </p>
-                {latest.decision && <p className={s.decision}>Agent: <strong>{latest.decision.decision}</strong> — {latest.decision.reason}</p>}
-              </>
-            )}
-          </section>
-
-          <section className={s.panel} aria-label="Activity timeline">
-            <h2>Activity</h2>
-            {events.length === 0 ? <p className="muted">Events appear here as the agent observes, decides, and acts.</p> : (
-              <ol className={s.timeline}>
-                {events.map((e) => (
-                  <li key={e.id} className={s[`lv_${e.level}`]}>
-                    <time dateTime={e.createdAt}>{time(e.createdAt)}</time>
-                    <div>
-                      <p>{e.message}</p>
-                      {e.data && typeof e.data.explorer === "string" && <p className={s.evidence}>
-                        <a href={e.data.explorer} target="_blank" rel="noreferrer">Transaction {short(String(e.data.transactionHash))}</a>
-                        {e.data.userOpHash ? <> · UserOperation <span className="hash">{short(String(e.data.userOpHash))}</span></> : null}
-                        {e.data.authority ? <> · signed by {String(e.data.authority) === "MASTER" ? "master owner" : "agent session"}</> : null}
-                      </p>}
-                    </div>
-                  </li>
-                ))}
-              </ol>
-            )}
-          </section>
-
-          <section className={s.panel} aria-label="Operations">
-            <h2>Operations</h2>
-            <p className="muted">Transaction and UserOperation are separate: a bundler sends the transaction; your account validates the UserOperation signature.</p>
-            <div className={s.tableWrap}>
-              <table className={s.table}>
-                <thead><tr><th>Purpose</th><th>Signed by</th><th>Status</th><th>UserOperation</th><th>Transaction</th></tr></thead>
-                <tbody>
-                  {dash.operations.map((o) => (
-                    <tr key={o.id}>
-                      <td>{o.purpose.toLowerCase()}</td>
-                      <td>{o.authority === "MASTER" ? "Master owner" : "Agent session"}</td>
-                      <td>{o.state === "INCLUDED" ? (o.userOpSuccess ? "Succeeded" : "Execution failed") : o.state.replaceAll("_", " ").toLowerCase()}</td>
-                      <td className="hash">{short(o.userOpHash)}</td>
-                      <td>{o.explorer ? <a className="hash" href={o.explorer} target="_blank" rel="noreferrer">{short(o.transactionHash)}</a> : <span className="muted">none</span>}</td>
-                    </tr>
-                  ))}
-                  {dash.operations.length === 0 && <tr><td colSpan={5} className="muted">No operations yet.</td></tr>}
-                </tbody>
-              </table>
-            </div>
-          </section>
-        </div>
-
-        <aside className={s.side}>
-          <section className={`${s.panel} ${s.authority}`} aria-label="Agent authority">
-            <h2>Agent authority</h2>
-            {dash.session ? (
-              <>
-                <p className={sessionLive ? s.live : s.dead}>{sessionLive ? "Active on-chain"
-                  : dash.session.onChain === "EXHAUSTED" ? (c?.twoWay ? `All swaps for this ${windowHours} h window used. The count resets on its own; bigger moves ask you.` : "All swaps used. Authorize again to continue.")
-                  : `Not usable: ${dash.session.onChain.toLowerCase().replaceAll("_", " ")}`}</p>
-                <dl className={s.facts}>
-                  <dt>Per sale</dt><dd>{weth(c?.maxAmountInWei)} WETH <span className="muted">(≤ ${pol?.maxAutoTxUsd} at ${c?.authPrice.toFixed(0)})</span></dd>
-                  {c?.twoWay && <><dt>Per purchase</dt><dd>{usdcFmt(c.maxUsdcInRaw)} USDC <span className="muted">(most it can spend)</span></dd></>}
-                  <dt>Swaps left</dt><dd>{opsLeft ?? "unknown"} of {c?.maxOps} {c?.twoWay ? <span className="muted">(per {windowHours} h, resets; enforced on-chain)</span> : <span className="muted">(counted on-chain)</span>}</dd>
-                  <dt>Today</dt><dd>${usedUsd.toFixed(2)} of ${(dash.budget.budgetCents / 100).toFixed(2)}</dd>
-                  <dt>Expires</dt><dd>{new Date(dash.session.validUntil).toLocaleString()}</dd>
-                  <dt>Reauthorize at</dt><dd>ETH ≥ ${dash.compiled?.reauthAtPrice.toFixed(0)}</dd>
-                  <dt>Permission</dt><dd className="hash">{dash.session.permissionId}</dd>
-                </dl>
-                <p className="muted">The agent can only swap {c?.twoWay ? "between WETH and USDC" : "WETH for USDC"} on Uniswap, back to this account, within these limits. Anything else is refused by the account itself.</p>
-              </>
-            ) : <p className="muted">No agent session. Authorize Guardian to let it rebalance within your limits.</p>}
-            <div className={s.actions}>
-              {!sessionLive && <button className="primary" disabled={!!busy} onClick={() => run("authorize", async () => masterSign(await api("/api/authorize", {}), "Authorization signed"))}>Authorize Guardian</button>}
-              {dash.session && dash.session.status !== "PENDING_AUTHORIZATION" && <button className="danger" disabled={!!busy} onClick={() => run("revoke", async () => masterSign(await api("/api/revoke", {}), "Revocation signed"))}>Revoke agent</button>}
-            </div>
-          </section>
-
-          {pending.length > 0 && (
-            <section className={`${s.panel} ${s.approvals}`} aria-label="Waiting for your approval">
-              <h2>Waiting for your approval</h2>
-              {pending.map((a) => (
-                <div key={a.id} className={s.approval}>
-                  <p>{a.plan?.direction === "BUY_WETH"
-                    ? <>Buy {weth(a.plan?.wethWei)} WETH for at most {usdcFmt(a.plan?.limitRaw)} USDC</>
-                    : <>Sell ≈ ${(Number(a.requestedUsdCents ?? 0) / 100).toFixed(2)} of WETH ({weth(a.plan?.wethWei)} WETH)</>}
-                    {a.plan?.targetPct !== undefined && <span className="muted"> · toward {a.plan.targetPct}%</span>}</p>
-                  {a.decision?.reason && <p className="muted">Agent: {a.decision.reason}</p>}
-                  <p className="muted">Needs you because: {(a.reasons ?? []).join(", ").replaceAll("_", " ").toLowerCase()}. Prices are rechecked before you sign.</p>
-                  <div className={s.actions}>
-                    <button className="primary" disabled={!!busy} onClick={() => run("approve", async () => {
-                      const r = await api<{ cancelled: boolean; userOperationId: string; userOpHash: Hex }>(`/api/approvals/${a.id}/prepare`, {});
-                      if (r.cancelled) return "No longer needed after rechecking prices — cancelled";
-                      return masterSign(r, "Rebalance approved");
-                    })}>Review and sign</button>
-                    <button disabled={!!busy} onClick={() => run("decline", async () => { await api(`/api/approvals/${a.id}/decline`, {}); return "Declined"; })}>Decline</button>
-                  </div>
-                </div>
-              ))}
+          {dash.policy && (
+            <section className={`glass ${s.panel}`} aria-label="Allocation history">
+              <div className={s.panelHead}><h2>WETH share · last 7 days</h2><button className="ghost" onClick={() => setView("activity")}>See activity <Icon name="chevron" size={14} /></button></div>
+              <AllocationChart points={insights?.history ?? []} policy={dash.policy} current={"error" in dash.portfolio ? null : dash.portfolio.wethWeightPct} />
             </section>
           )}
+        </>}
 
-          <section className={s.panel} aria-label="Outcomes">
-            <h2>Outcomes</h2>
-            <dl className={s.outcomes}>
-              <div className={s.oGood}><dt>Done by the agent</dt><dd>{o.agentConfirmed}</dd></div>
-              <div className={s.oGood}><dt>Done with your approval</dt><dd>{o.masterConfirmed}</dd></div>
-              <div className={s.oWarn}><dt>Waiting for you</dt><dd>{o.waiting}</dd></div>
-              <div className={s.oBad}><dt>Blocked by policy</dt><dd>{o.blocked}</dd></div>
-              <div className={s.oBad}><dt>Stopped or reverted</dt><dd>{o.stopped}</dd></div>
-              <div><dt>No action needed</dt><dd>{o.noAction}</dd></div>
-            </dl>
-          </section>
+        {view === "portfolio" && <>
+          {head("Portfolio", "Every asset you hold or can add — verified on-chain, valued at Chainlink prices.")}
+          <PortfolioView ctl={ctl} />
+        </>}
 
-          <section className={s.panel} aria-label="Ask the agent">
-            <h2>Ask the agent to check now</h2>
-            <label htmlFor="msg" className="muted">Optional note for the agent. It can only suggest; it cannot change your limits.</label>
-            <textarea id="msg" rows={3} value={message} maxLength={1000} onChange={(e) => setMessage(e.target.value)} />
-            <div className={s.actions}>
-              <button disabled={!!busy} onClick={() => run("evaluate", async () => {
-                const r = await api<{ state?: string; skipped?: string }>("/api/evaluate", { message: message || undefined });
-                setMessage("");
-                return r.skipped ? `Not started: ${r.skipped.replaceAll("_", " ").toLowerCase()}` : `Evaluation finished: ${STATE_LABEL[r.state ?? ""] ?? r.state}`;
-              })}>{busy === "evaluate" ? "Checking…" : "Check now"}</button>
+        {view === "agent" && <>
+          {head("Agent", "Talk to Guardian about your portfolio, its decisions and your limits.")}
+          <AgentChatWithAsk ctl={ctl} proactive={proactive} setView={setView} onSeen={() => setUnread(0)} pendingAsk={pendingAsk} clearAsk={() => setPendingAsk(null)} />
+        </>}
+
+        {view === "activity" && <>
+          {head("Activity", "Everything the agent noticed, decided and did — with on-chain proof.")}
+          <History dash={dash} events={events} />
+        </>}
+
+        {view === "limits" && dash.policy && <>
+          {head("Limits", "The rules your smart account enforces on the agent. Preview the effect before you save.")}
+          <TargetEditor ctl={ctl} />
+          <LimitsEditor ctl={ctl} points={insights?.history ?? []} />
+          <Guardrails {...ctl} />
+        </>}
+
+        {view === "settings" && <>
+          {head("Settings", "AI model, appearance, demo tools and help.")}
+          <div className={s.grid}>
+            <div className={s.col}>
+              <section className={`glass ${s.panel}`} aria-label="AI model">
+                <div className={s.panelHead}><h2>AI model</h2></div>
+                <p className={s.lead}>Models are tried in order. If none answers, Guardian uses your own target as a safe rule for small trades, and pauses after 3 failures in a row.</p>
+                <ol className={s.feed}>{(dash.agent.models.length ? dash.agent.models : ["none configured"]).map((m, i) => (
+                  <li key={m} className={s.feedItem}><span className={s.feedIcon}>{i + 1}</span><div><div className={s.feedTitle}>{m.split(":")[1] ?? m}</div><p className={s.feedWhy}>{i === 0 ? "Primary" : "Fallback"} · {m.split(":")[0]}</p></div></li>
+                ))}</ol>
+              </section>
+              <section className={`glass ${s.panel}`} aria-label="Appearance">
+                <div className={s.panelHead}><h2>Appearance & help</h2></div>
+                <div className={s.row}>
+                  <button onClick={toggleTheme}><Icon name="sun" size={16} /> Toggle theme</button>
+                  <button onClick={() => setHelp(true)}><Icon name="help" size={16} /> How Guardian works</button>
+                  <button onClick={() => setPalette(true)}><Icon name="search" size={16} /> Commands <kbd>⌘K</kbd></button>
+                </div>
+              </section>
             </div>
-          </section>
+            <div className={s.col}><SimulatePanel {...ctl} /></div>
+          </div>
+        </>}
+      </main>
 
-          <section className={s.panel} aria-label="Identities">
-            <h2>Who signs what</h2>
-            <dl className={s.facts}>
-              <dt>Master owner</dt><dd className="hash">{dash.identities.masterOwner}</dd>
-              <dt>Smart account</dt><dd className="hash">{dash.identities.smartAccount}</dd>
-              <dt>Agent signer</dt><dd className="hash">{dash.identities.sessionSigner ?? "none"}</dd>
-              <dt>EntryPoint</dt><dd className="hash">{dash.identities.entryPoint}</dd>
-            </dl>
-            <p className="muted">On the explorer, the sender is the bundler. Who authorized an action is shown by its UserOperation signature.</p>
-          </section>
-        </aside>
-      </div>
+      <CommandPalette open={palette} onClose={() => setPalette(false)} commands={commands} onAsk={(q) => { setPendingAsk(q); setView("agent"); }} />
+      {help && <Onboarding onClose={() => setHelp(false)} maxAuto={dash.policy?.maxAutoTxUsd ?? 10} />}
     </div>
   );
+}
+
+/** Chat view that also sends a question queued from the command palette. */
+function AgentChatWithAsk({ pendingAsk, clearAsk, ...props }: Parameters<typeof AgentChat>[0] & { pendingAsk: string | null; clearAsk: () => void }) {
+  return <AgentChat {...props} initialAsk={pendingAsk} onInitialAsk={clearAsk} />;
 }

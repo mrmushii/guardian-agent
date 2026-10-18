@@ -51,6 +51,8 @@ export const policies = pgTable("policies", {
 export const agentSessions = pgTable("agent_sessions", {
   id: uuid("id").primaryKey().defaultRandom(),
   accountId: uuid("account_id").notNull().references(() => smartAccounts.id),
+  /** v3: one permission (session key) per traded asset; legacy sessions are WETH. */
+  asset: text("asset").notNull().default("WETH"),
   policyId: uuid("policy_id").notNull().references(() => policies.id),
   permissionId: text("permission_id").notNull(),
   signerAddress: text("signer_address").notNull(),
@@ -189,3 +191,35 @@ export const watcherCheckpoints = pgTable("watcher_checkpoints", {
   lastBlock: bigint("last_block", { mode: "bigint" }).notNull(),
   heartbeatAt: timestamp("heartbeat_at", { withTimezone: true }).notNull().defaultNow(),
 });
+
+/** Owner-added tokens (beyond the built-in registry), with the result of the last on-chain verification. */
+export const customAssets = pgTable("custom_assets", {
+  id: uuid("id").primaryKey().defaultRandom(),
+  accountId: uuid("account_id").notNull().references(() => smartAccounts.id),
+  chainId: integer("chain_id").notNull(),
+  symbol: text("symbol").notNull(),
+  name: text("name").notNull(),
+  token: text("token").notNull(),
+  decimals: integer("decimals").notNull(),
+  feed: text("feed"),
+  feeTier: integer("fee_tier"),
+  kind: text("kind").notNull().default("volatile"),
+  /** VERIFIED (tradable on-chain) | PAPER (priced, simulated only) | REJECTED */
+  status: text("status").notNull(),
+  evidence: jsonb("evidence"),
+  verifiedAt: timestamp("verified_at", { withTimezone: true }).notNull().defaultNow(),
+  createdAt: created(),
+}, (t) => [uniqueIndex("custom_assets_account_token").on(t.accountId, t.chainId, t.token)]);
+
+/**
+ * Simulated ("paper") positions for assets with no usable pool on this network. Quantities are raw token units.
+ * The USDC row is the amount of real USDC notionally committed to paper positions (spent minus proceeds), so the
+ * portfolio value is real balances − committed USDC + Σ paper quantity × oracle price.
+ */
+export const paperPositions = pgTable("paper_positions", {
+  accountId: uuid("account_id").notNull().references(() => smartAccounts.id),
+  chainId: integer("chain_id").notNull(),
+  symbol: text("symbol").notNull(),
+  qtyRaw: numeric("qty_raw", { precision: 78, scale: 0 }).notNull(),
+  updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+}, (t) => [uniqueIndex("paper_positions_key").on(t.accountId, t.chainId, t.symbol)]);

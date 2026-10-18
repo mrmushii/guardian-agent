@@ -1,0 +1,17 @@
+.stack { display: flex; height: 12px; border-radius: 999px; overflow: hidden; background: var(--line); margin-bottom: 14px; gap: 2px; }
+.stack i { display: block; height: 100%; transition: width 0.3s ease; }
+.rows { list-style: none; margin: 0 0 12px; padding: 0; display: grid; gap: 10px; }
+.rows li { display: grid; grid-template-columns: 130px minmax(0, 1fr) 82px 32px; gap: 12px; align-items: center; }
+@media (max-width: 560px) { .rows li { grid-template-columns: 100px minmax(0, 1fr) 70px 28px; gap: 8px; } }
+.sym { display: flex; align-items: center; gap: 8px; font-weight: 700; flex-wrap: wrap; }
+.sym i { width: 10px; height: 10px; border-radius: 3px; flex: none; }
+.paper, .hub { font-size: 0.66rem; font-weight: 750; padding: 1px 7px; border-radius: 999px; }
+.paper { color: var(--accent); background: var(--accent-wash); }
+.hub { color: var(--ink-3); background: var(--glass-strong); }
+.pct { display: flex; align-items: center; gap: 4px; font-weight: 650; }
+.pct input { padding: 0.4rem 0.5rem; text-align: right; }
+.drift { display: grid; gap: 6px; margin-top: 14px; }
+.drift label { display: flex; justify-content: space-between; font-size: 0.88rem; font-weight: 650; }
+.drift b { font-family: var(--font-mono), monospace; color: var(--accent); }
+.drift small { color: var(--ink-3); font-size: 0.78rem; }
+.preview { margin: 12px 0 0; padding: 10px 12px; border-radius: var(--radius-sm); background: var(--accent-wash); display: flex; gap: 8px; align-items: flex-start; font-size: 0.9rem; }

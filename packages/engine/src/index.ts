@@ -5,3 +5,7 @@ export * from "./userops.js";
 export * from "./pipeline.js";
 export * from "./master.js";
 export * from "./reconcile.js";
+export * from "./demo.js";
+export * from "./insight.js";
+export * from "./assets.js";
+export * from "./multi.js";

@@ -104,3 +104,17 @@ Negative cases rejected with `CallViolatesParamRule`: cap + 1, attacker recipien
 The window test uses 120 s, not 24 h, because Pimlico paymaster signatures are only valid for minutes. With an hour of simulated time, the result is `AA32 paymaster expired`, not a policy result.
 
 **Versioning.** `policy_compilations.permission_version` records which layout was installed: 1 is sell-only with a session-total count, 2 is two-way with a resetting window. The engine rebuilds the exact permission for that version, so older sessions can still be revoked.
+
+## Addendum 2: multi-asset authority (2026-10-18)
+
+Evidence: `docs/evidence/gate0-multi-asset-shared-policy-rejected.json`, `docs/evidence/gate0-multi-asset-permissions.json` (script `scripts/gate0/multi-asset-harness.ts`, simulation only).
+
+**Shared call policy: rejected.** One `CallPolicy` V0_0_5 cannot hold two entries with the same target and selector. Installing sell rules for WETH and a second asset on `exactInputSingle` reverts with `duplicate permissionHash`, so per-asset caps cannot live in one policy. (`ONE_OF` on the token field exists, but then a single amount cap would apply to tokens with different decimals and prices, which is unsafe.)
+
+**Decision: one permission per asset, USDC hub.** Each managed asset gets its own permission validator (its own session key) with today's two-way layout: sell `asset → USDC` via `exactInputSingle` with `amountIn ≤ asset cap`, buy `USDC → asset` via `exactOutputSingle` with `amountInMaximum ≤ USDC cap`, recipient = the account, fixed fee tier, zero price limit.
+
+Proven in sequential simulated blocks on one account: installing a second asset's permission keeps the first working; each key is confined to its own pair and caps (a cap 10× larger on asset B never applies to WETH); a key cannot trade another key's asset, bypass USDC (B → WETH), pay a foreign recipient, or batch a transfer. All 13 cases match.
+
+Consequences: an asset-to-asset rebalance runs as two operations (sell leg with the overweight asset's key, then buy leg with the underweight asset's key); rate limits and gas allowances are tracked per asset; authorization installs every asset's permission in one owner signature, and revocation uninstalls them all.
+
+**Batch install / revoke** (`scripts/gate0/multi-asset-install.ts`, `docs/evidence/gate0-multi-asset-install.json`): the owner installs several per-asset permissions in one master UserOperation (`authorizeAgentCallsMulti`: bounded approve per asset, one USDC approve, one `installValidations` with every permission at the **same** validation nonce — `nonce + 1` reverts `InvalidNonce` — and `grantAccess(execute)` per key), each key then trades within its own caps, and `revokeAgentCallsMulti` removes them all in one operation, after which every key is rejected. Each permission install deploys several policy configs: a two-asset install needs ~2× the call gas of one (bundler estimation covers this in production; a fixed 3M limit in the harness ran out).

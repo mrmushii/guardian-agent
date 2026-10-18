@@ -70,3 +70,45 @@ export function assessRebalance(p: PortfolioInput, policy: HumanPolicy, targetPc
 /** USD size of an out-of-band assessment (null when within band). */
 export const tradeUsd18 = (a: RebalanceAssessment): bigint | null =>
   a.kind === "SELL_WETH" ? a.saleUsd18 : a.kind === "BUY_WETH" ? a.buyUsd18 : null;
+
+// ---------------- Multi-asset (v3): target weights + drift band through a USDC hub ----------------
+
+export interface Holding { symbol: string; usdCents: bigint }
+export interface Leg { symbol: string; side: "SELL" | "BUY"; usdCents: bigint; fromPct: number; targetPct: number }
+export interface MultiAssessment {
+  totalCents: bigint;
+  weights: { symbol: string; pct: number; targetPct: number; driftPct: number }[];
+  /** True when any asset is more than `driftPct` points from its target (strict, like the legacy band). */
+  drifted: boolean;
+  /** Trades that bring every non-hub asset to target: sells first (they fund buys), largest first. */
+  legs: Leg[];
+}
+
+/**
+ * Pure planner. Weights are computed from USD cents; a leg is planned for every non-hub asset whose gap to target
+ * is at least `minTradeCents` (dust is left alone). Assets held but not targeted get target 0 (sold down).
+ */
+export function assessMulti(holdings: Holding[], targets: { symbol: string; targetPct: number }[], driftPct: number,
+  opts: { hub?: string; minTradeCents?: bigint } = {}): MultiAssessment {
+  const hub = opts.hub ?? "USDC", minTrade = opts.minTradeCents ?? 100n;
+  if (holdings.some((h) => h.usdCents < 0n)) throw new Error("Negative holding");
+  const symbols = [...new Set([...targets.map((t) => t.symbol), ...holdings.filter((h) => h.usdCents > 0n).map((h) => h.symbol)])];
+  const value = (s: string) => holdings.filter((h) => h.symbol === s).reduce((a, h) => a + h.usdCents, 0n);
+  const target = (s: string) => targets.find((t) => t.symbol === s)?.targetPct ?? 0;
+  const totalCents = symbols.reduce((a, s) => a + value(s), 0n);
+  const weights = symbols.map((s) => {
+    const pct = totalCents > 0n ? Number((value(s) * 1_000_000n) / totalCents) / 10_000 : 0;
+    return { symbol: s, pct, targetPct: target(s), driftPct: pct - target(s) };
+  });
+  const drifted = totalCents > 0n && weights.some((w) => Math.abs(w.driftPct) > driftPct);
+  const legs: Leg[] = [];
+  if (drifted) for (const w of weights) {
+    if (w.symbol === hub) continue;
+    const goal = (totalCents * BigInt(w.targetPct)) / 100n, have = value(w.symbol);
+    const gap = goal - have;
+    if (gap >= minTrade) legs.push({ symbol: w.symbol, side: "BUY", usdCents: gap, fromPct: w.pct, targetPct: w.targetPct });
+    else if (-gap >= minTrade) legs.push({ symbol: w.symbol, side: "SELL", usdCents: -gap, fromPct: w.pct, targetPct: w.targetPct });
+  }
+  legs.sort((a, b) => (a.side === b.side ? Number(b.usdCents - a.usdCents) : a.side === "SELL" ? -1 : 1));
+  return { totalCents, weights, drifted, legs };
+}

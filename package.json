@@ -2,7 +2,7 @@
   "name": "guardian-agent",
   "private": true,
   "type": "module",
-  "packageManager": "pnpm@12.11.2",
+  "packageManager": "pnpm@10.34.7",
   "scripts": {
     "test": "vitest run",
     "typecheck": "tsc --noEmit -p .",

@@ -30,6 +30,24 @@ On the explorer, the transaction sender is the bundler. The authority behind eac
 
 Later housekeeping (not scenario evidence): the session was revoked and re-authorized as permission `0x5064ff44` ([`0x344b8c25…99e3e9f`](https://sepolia.basescan.org/tx/0x344b8c259b002021144f83e4195ad4cd5449df5aa6c283b88c07eae9c99e3e9f)), and the demo portfolio was reset to $10 WETH + $10 USDC with the surplus moved to Wallet B ([`0xaf1fdf38…3331e21f`](https://sepolia.basescan.org/tx/0xaf1fdf38e7e5ede317974026ef02c6546f8c5ce5a7741ce6e5a60c523331e21f)).
 
+## v2 — two-way permission (2026-10-17/18)
+
+The v1 sell-only permission was replaced by a two-way permission: sell via `exactInputSingle`, buy via `exactOutputSingle` with an on-chain `amountInMaximum` ceiling, 6 swaps per resetting 24 h window. Permission `0x15314af3`, signer `0x44664dDC…E13665C`.
+
+| # | Step | Signed by | UserOperation | Transaction | Block | Result |
+| --- | --- | --- | --- | --- | --- | --- |
+| 11 | Revoke v1 permission | Master | `0x503401bd…2cd5d9cc5` | [`0x4063e41c…9f71f1a88d`](https://sepolia.basescan.org/tx/0x4063e41c07febaff4a7a9d2952813ba03982b843ad1da780758eea9f71f1a88d) | 48247088 | Success |
+| 12 | Authorize v2: permission `0x15314af3` | Master | `0x8f177280…7ad6409dbe` | [`0x0930d3fa…e3ff84fea74`](https://sepolia.basescan.org/tx/0x0930d3fa6133fda7e173271cbeaa842b76fc5dfcaf66c883144b2e3ff84fea74) | 48247098 | Success |
+| 13 | **Scenario 1 (v2): autonomous sale, Tier 1** (67.88% after the Wallet B transfer) | **Agent session** | `0xa0a35241…a0fb760e1` | [`0xc5640ea9…c1c7dde32230`](https://sepolia.basescan.org/tx/0xc5640ea95991899d4005a01ef3245c9ad73b37eff85520c8e9a6c1c7dde32230) | 48247125 | Success |
+| 14 | **Buy side: autonomous purchase, Tier 1.** 42.68% → buy 0.001652 WETH via `exactOutputSingle` for 7.03 USDC (max 7.07), risk 19 LOW | **Agent session** | `0xac92806f…bbbd8beeb4840ea93c20a2d9d40a3b4f` | [`0x94fee704…71db047fa9eaecfbb26f7a`](https://sepolia.basescan.org/tx/0x94fee7044adb495548058301dc23f1a9850e6657af71db047fa9eaecfbb26f7a) | 48279774 | Success; post-trade allocation 57.54% read at the receipt block |
+
+| 15 | AI fallback #1 (`LLM_MODEL=does-not-exist`): `AI_UNAVAILABLE` (Gemini 404), `provider: deterministic-fallback`, routed `RULE_BASED_FALLBACK`, sell $1.63, risk 14 LOW | **Agent session** | `0x569bc554…5d61e682e4` | [`0xc4fc53ed…e0fe78f6ddfdb5df77e32854ee5bf`](https://sepolia.basescan.org/tx/0xc4fc53edd93a689499370ea6649c054348be0fe78f6ddfdb5df77e32854ee5bf) | 48280107 | Success; 57.58% → 51.22% |
+| 16 | AI fallback #2 ("2 in a row"), same routing | **Agent session** | `0x49e736ae…7f31e6cc4f` | [`0x232edb4a…f618d1ad7fdd4f7b91b284672438a585698`](https://sepolia.basescan.org/tx/0x232edb4a6dfb14a576cd10269fb30f618d1ad7fdd4f7b91b284672438a585698) | 48280429 | Success |
+| 17 | AI fallback #3 ("3 in a row"): **fail closed**, no trade, account paused `AI_UNAVAILABLE_OR_INVALID`; then owner `resume` | — | — | — | — | Action `f8a6d60b…` FAILED as designed |
+| 18 | **Partial step:** Wallet B sends $22 of WETH (70.30%); full move $11.70 > cap, `PARTIAL_STEP`, one capped sale of 0.0036 WETH, routed `PARTIAL_STEP_WITHIN_CAP`, risk 21 LOW | **Agent session** | `0xa521c2a8…19d70dd205` | [`0x832f0cd1…02d2ea53a35baf2e4ae2835d5b38`](https://sepolia.basescan.org/tx/0x832f0cd1b8b22757bdb6103785a028f8afca02d2ea53a35baf2e4ae2835d5b38) | 48280787 | Success; 52.39% after the step (testnet pool overpays ≈1.75×), so no remainder trade was needed; the evaluation after the cooldown returned `NO_ACTION` (action `608e1a81…`) |
+
+Defense B against the v2 session key: **8/8 forbidden operations rejected by the bundler** (`evidence/defense-b-bundler-rejections-v2.json`).
+
 ## Scenario 1 — autonomous (E1, testnet)
 
 The worker detected the WETH transfer. It then:
@@ -72,4 +90,28 @@ The master batch raised the router allowance by exactly `amountIn` and restored 
 ## Notes
 
 - `amountOutMinimum` is not constrained on-chain. Market quality is checked off-chain, which is the plan's stated limitation.
+- Post-trade allocation is read at a block no older than the receipt. Run #16 showed a lagging RPC node answering "block not found" for the receipt block, so the `CONFIRMED` line lost its allocation. The read now waits (bounded, 15 s) for the node to reach that block, and a failed valuation is shown in the `CONFIRMED` line instead of dropped silently. Row 18 is the first trade on the fixed code.
 - Testnet allocations after a swap differ from the 53% target because Sepolia pools are not market-priced. Mainnet proof (E1) is pending owner approval.
+
+## Multi-asset: on-chain asset verification (2026-10-18)
+
+`node --env-file=.env --import tsx scripts/verify-asset.ts` checks each registry asset on Base Sepolia: ERC-20 metadata, fresh Chainlink USD feed, USDC pool with liquidity, and a $1 USDC → asset → USDC quote that must keep ≥ 90% and buy within 10× of the oracle value.
+
+| Asset | Feed | Token / pool | Status |
+| --- | --- | --- | --- |
+| USDC | USDC/USD `0xd30e…5165` | hub | VERIFIED |
+| WETH | ETH/USD `0x4aDC…c7cb1` | 0.3% pool, $1 round trip $0.99 | **VERIFIED (tradable)** |
+| cbBTC | BTC/USD `0x0FB9…4298` | 0.05% pool loses 99% on $1 | PAPER |
+| LINK | LINK/USD `0xb113…5A61` | 1% pool priced 4.7e-12× the oracle | PAPER |
+| DAI | DAI/USD `0xD109…945e` | no token on Base Sepolia | PAPER |
+| USDT | USDT/USD `0x3ec8…934f` | no token on Base Sepolia | PAPER |
+| AERO | none on testnet | none | UNAVAILABLE |
+
+On testnet only WETH/USDC can trade for real; other assets run in clearly labelled simulated mode, priced by their Chainlink feeds.
+
+### Live multi-asset run (2026-10-18, policy v4 → v5: WETH 50% / cbBTC 10% / USDC 40%, drift ±5)
+
+| Step | Outcome |
+| --- | --- |
+| Allocation WETH 50.7%, cbBTC 0%, USDC 49.3% → plan "buy $8.93 cbBTC" | **Simulated** fill: 0.000110090 cbBTC at the Chainlink price (cbBTC pool unusable on Sepolia); allocation WETH 50.7 / cbBTC 10.0 / USDC 39.3 |
+| Wallet B sends $10 WETH → WETH 55.7% → plan "sell $5.63 WETH, buy $1.01 cbBTC", sells first | **On-chain** Tier 1 sale with the WETH agent key: 0.00237402 WETH for 10.02 USDC, risk 16 LOW, block 48287918, [`0x40ee426e…caf5`](https://sepolia.basescan.org/tx/0x40ee426ecbf3dee1d5bfc556294e8d9deddd18f35f8d6975b92ad33b1612caf5); allocation WETH 47.9 / cbBTC 8.6 / USDC 43.5 |

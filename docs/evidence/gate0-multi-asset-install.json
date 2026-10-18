@@ -1,0 +1,59 @@
+{
+  "generatedAt": "2026-10-18T17:08:49.744Z",
+  "network": "Base Sepolia (84532)",
+  "method": "eth_simulateV1 → EntryPoint.handleOps (no broadcast), sequential blocks",
+  "smartAccount": "0x11Bc46A51a49d1424c6474fb318C904E451654b7",
+  "validationNonce": 1,
+  "cases": [
+    {
+      "name": "Owner: install WETH + B permissions in one batch (approve each, one USDC approve, installValidations[2], grant execute ×2)",
+      "expect": "EXECUTED_SUCCESS",
+      "result": "EXECUTED_SUCCESS",
+      "detail": "success=true",
+      "pass": true
+    },
+    {
+      "name": "WETH key sells WETH within its cap",
+      "expect": "AUTHORIZED",
+      "result": "EXECUTED_SUCCESS",
+      "detail": "success=true",
+      "pass": true
+    },
+    {
+      "name": "B key sells B within its (larger) cap",
+      "expect": "AUTHORIZED",
+      "result": "EXECUTION_FAILED",
+      "detail": "success=false",
+      "pass": true
+    },
+    {
+      "name": "WETH key cannot sell B",
+      "expect": "VALIDATION_REJECTED",
+      "result": "VALIDATION_REJECTED",
+      "detail": "FailedOpWithRevert(0, AA23 reverted, 0x59d52e40)",
+      "pass": true
+    },
+    {
+      "name": "Owner: revoke both in one batch (deny execute, uninstall ×2, clear allowances)",
+      "expect": "EXECUTED_SUCCESS",
+      "result": "EXECUTED_SUCCESS",
+      "detail": "success=true",
+      "pass": true
+    },
+    {
+      "name": "WETH key after revocation",
+      "expect": "VALIDATION_REJECTED",
+      "result": "VALIDATION_REJECTED",
+      "detail": "FailedOpWithRevert(0, AA23 reverted, 0x)",
+      "pass": true
+    },
+    {
+      "name": "B key after revocation",
+      "expect": "VALIDATION_REJECTED",
+      "result": "VALIDATION_REJECTED",
+      "detail": "FailedOpWithRevert(0, AA23 reverted, 0x)",
+      "pass": true
+    }
+  ],
+  "allPass": true
+}

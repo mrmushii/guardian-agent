@@ -48,3 +48,32 @@ export async function revokeAgentCalls(n: NetworkConfig, account: Address, permi
   if (clearAllowance) calls.push(approve(n.weth, n, 0n), approve(n.usdc, n, 0n));
   return calls;
 }
+
+/** One per-asset agent permission to install (multi-asset authority: one session key per traded asset). */
+export interface AssetGrant { permission: PermissionPlugin; token: Address; allowance: bigint }
+
+/**
+ * Master-only batch for multi-asset authorization: a bounded router allowance per asset plus one USDC allowance
+ * covering every asset's buy side, all permissions installed in a single installValidations call, and execute()
+ * access for each. A single-grant batch is equivalent to `authorizeAgentCalls`.
+ */
+export async function authorizeAgentCallsMulti(n: NetworkConfig, account: Address, grants: AssetGrant[], usdcAllowance: bigint, validationNonce: number): Promise<HexCall[]> {
+  if (!grants.length) throw new Error("No asset to authorize");
+  if (usdcAllowance <= 0n || grants.some((g) => g.allowance <= 0n)) throw new Error("allowance must be positive and bounded");
+  const install = encodeFunctionData({
+    abi: KernelV3_3AccountAbi, functionName: "installValidations",
+    args: [grants.map((g) => permissionValidationId(g.permission)), grants.map(() => ({ nonce: validationNonce, hook: zeroAddress })),
+      await Promise.all(grants.map((g) => g.permission.getEnableData(account))), grants.map(() => "0x" as const)],
+  });
+  return [...grants.map((g) => approve(g.token, n, g.allowance)), approve(n.usdc, n, usdcAllowance), { to: account, value: 0n, data: install },
+    ...grants.map((g) => grantExecute(account, g.permission, true))];
+}
+
+/** Master-only batch revoking every per-asset permission and clearing each router allowance. */
+export async function revokeAgentCallsMulti(n: NetworkConfig, account: Address, grants: { permission: PermissionPlugin; token: Address }[]): Promise<HexCall[]> {
+  const calls: HexCall[] = [];
+  for (const g of grants) calls.push(...(await revokeAgentCalls(n, account, g.permission, false)));
+  for (const token of [...new Set(grants.map((g) => g.token.toLowerCase()))]) calls.push(approve(token as Address, n, 0n));
+  calls.push(approve(n.usdc, n, 0n));
+  return calls;
+}

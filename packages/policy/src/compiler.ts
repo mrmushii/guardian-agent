@@ -21,6 +21,8 @@ export interface CompileInput {
   /** Rate-limit window length; the count resets after it (Gate 0 addendum). */
   windowSec: number;
   authorizedAt: Date;
+  /** Decimals of the asset sold for USDC (default WETH, 18). Multi-asset: one compilation per asset. */
+  assetDecimals?: number;
 }
 
 /** Auditable result; on-chain values only. USD limits stay off-chain. */
@@ -64,7 +66,7 @@ export function compilePolicy(input: CompileInput): CompiledAuthority {
   if (!Number.isInteger(windowSec) || windowSec < 1) throw new Error("windowSec must be a positive integer");
 
   const cents = usdToCents(policy.maxAutoTxUsd);
-  const maxAmountInWei = tokenCeiling(cents, authPrice, bufferBps, WETH_DECIMALS);
+  const maxAmountInWei = tokenCeiling(cents, authPrice, bufferBps, input.assetDecimals ?? WETH_DECIMALS);
   const maxUsdcInRaw = tokenCeiling(cents, usdcAuthPrice, usdcBufferBps, USDC_DECIMALS);
   if (maxAmountInWei === 0n || maxUsdcInRaw === 0n) throw new Error("Compiled ceiling rounds to zero");
 

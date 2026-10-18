@@ -7,14 +7,16 @@ import { maxInFromQuote, minOutFromQuote, quoteUsdcToWeth, quoteWethToUsdc, type
 import { recentMove } from "@guardian/oracle";
 import { assessRebalance, type TradeDirection } from "@guardian/portfolio";
 import { assessRisk } from "@guardian/risk";
-import { GUARDIAN_CONFIG, NETWORK_RISK, USDC_DECIMALS, WETH_DECIMALS, applyAgentStance, partialStepAllowed, reauthRequired, routeAuthority, usdToCents,
-  type RoutingDecision, type SessionStatus, type UsdPrice } from "@guardian/policy";
+import { GUARDIAN_CONFIG, NETWORK_RISK, USDC_DECIMALS, WETH_DECIMALS as WETH_DECIMALS_DEFAULT, applyAgentStance, partialStepAllowed, reauthRequired, routeAuthority, usdToCents,
+  portfolioTargets, type RoutingDecision, type SessionStatus, type UsdPrice } from "@guardian/policy";
 import { createSponsoredClient, swapRouterAbi } from "@guardian/account";
 import { simulateHandleOps } from "@guardian/simulation";
 import type { UserOperation } from "viem/account-abstraction";
 import type { EngineContext } from "./context.js";
 import { compiledFromRow, isTwoWay, loadAccountState, loadAgent, sessionStatus } from "./state.js";
 import { fmtBps, fmtUsd18, readPortfolio, usd18ToCents, type PortfolioSnapshot } from "./portfolio.js";
+import { marketFor } from "./assets.js";
+import { describeAllocation, multiPortfolio, paperFill } from "./multi.js";
 import { BundlerRejection, bundler, explorerTx, opHash, recordReceipt, serializeOp, submitSignedOp } from "./userops.js";
 
 export interface Trigger { key: string; kind: string; detail: string; block?: bigint; userMessage?: string }
@@ -33,10 +35,18 @@ const min = (...xs: bigint[]) => xs.reduce((a, b) => (b < a ? b : a));
  * `targetPct` is the WETH weight to move to (the agent may pick any whole percent inside the band).
  * `clamp` sizes the trade to the autonomous limits (partial step, E7): one cent under the USD cap and the on-chain cap.
  */
-export async function buildPlan(ctx: EngineContext, st: AccountState, snap: PortfolioSnapshot, opts: { targetPct?: number; clamp?: boolean } = {}) {
+export interface PlanLeg { side: "SELL" | "BUY"; usdCents: bigint; targetPct: number }
+export async function buildPlan(ctx: EngineContext, st: AccountState, snap: PortfolioSnapshot,
+  opts: { targetPct?: number; clamp?: boolean; leg?: PlanLeg; decimals?: number } = {}) {
   const policy = st.policy!;
   const { wethUsd, usdcUsd } = snap.prices;
-  const a = assessRebalance({ wethWei: snap.wethWei, usdcRaw: snap.usdcRaw, wethUsd, usdcUsd }, policy, opts.targetPct ?? policy.targetEthPct);
+  // Multi-asset (v3): the planner gives the leg; ctx is the asset's market and `weth*` fields mean that asset.
+  const WETH_DECIMALS = opts.decimals ?? WETH_DECIMALS_DEFAULT;
+  const a = opts.leg
+    ? (opts.leg.side === "SELL"
+      ? { kind: "SELL_WETH" as const, targetPct: opts.leg.targetPct, amountInWei: min(usd18ToToken(opts.leg.usdCents * 10n ** 16n, wethUsd, WETH_DECIMALS), snap.wethWei) }
+      : { kind: "BUY_WETH" as const, targetPct: opts.leg.targetPct, wethOutWei: usd18ToToken(opts.leg.usdCents * 10n ** 16n, wethUsd, WETH_DECIMALS) })
+    : assessRebalance({ wethWei: snap.wethWei, usdcRaw: snap.usdcRaw, wethUsd, usdcUsd }, policy, opts.targetPct ?? policy.targetEthPct);
   if (a.kind === "WITHIN_BAND") throw new Error("buildPlan requires an out-of-band assessment");
   const compiled = st.compilation ? compiledFromRow(st.compilation) : null;
   const clamp = !!opts.clamp && !!compiled;
@@ -80,7 +90,7 @@ export async function buildPlan(ctx: EngineContext, st: AccountState, snap: Port
   const dailyBudgetUsdCents = usdToCents(policy.dailyBudgetUsd);
   const risk = assessRisk({
     wethWei: quote.wethWei, usdcRaw: quote.usdcRaw, poolWethReserve: quote.poolWethReserve,
-    wethUsd, usdcUsd, requestedUsdCents, dailyBudgetUsdCents, maxDivergenceBps: NETWORK_RISK[ctx.chain.id]!.maxDivergenceBps,
+    wethUsd, usdcUsd, requestedUsdCents, dailyBudgetUsdCents, maxDivergenceBps: NETWORK_RISK[ctx.chain.id]!.maxDivergenceBps, assetDecimals: WETH_DECIMALS,
   });
   return { direction: a.kind as TradeDirection, targetPct: a.targetPct, clamped: clamp, wethWei: quote.wethWei, amountInRaw, compiledMaxInRaw,
     limitRaw, tradeUsd18, requestedUsdCents, quote, risk, violations, dailyBudgetUsdCents };
@@ -106,10 +116,14 @@ export const buyCall = (ctx: EngineContext, account: Address, wethOut: bigint, m
   swapCall(ctx, account, { direction: "BUY_WETH", wethWei: wethOut, amountInRaw: maxUsdcIn, limitRaw: maxUsdcIn });
 
 const weth = (wei: bigint) => (Number(wei) / 1e18).toFixed(6);
+const amt = (raw: bigint, decimals = 18) => (Number(raw) / 10 ** decimals).toPrecision(6);
 const usdc = (raw: bigint) => (Number(raw) / 1e6).toFixed(2);
-export const describeTrade = (p: Plan) => p.direction === "SELL_WETH"
-  ? `sell ${weth(p.wethWei)} WETH (≈ $${fmtUsd18(p.tradeUsd18)}) for ≥ ${usdc(p.limitRaw)} USDC`
-  : `buy ${weth(p.wethWei)} WETH for ≤ ${usdc(p.limitRaw)} USDC (≈ $${fmtUsd18(p.tradeUsd18)})`;
+export const describeTrade = (p: Plan, symbol = "WETH", decimals?: number) => {
+  const q = symbol === "WETH" && decimals === undefined ? weth(p.wethWei) : amt(p.wethWei, decimals);
+  return p.direction === "SELL_WETH"
+    ? `sell ${q} ${symbol} (≈ $${fmtUsd18(p.tradeUsd18)}) for ≥ ${usdc(p.limitRaw)} USDC`
+    : `buy ${q} ${symbol} for ≤ ${usdc(p.limitRaw)} USDC (≈ $${fmtUsd18(p.tradeUsd18)})`;
+};
 
 export const planJson = (p: Plan, extra: Record<string, unknown> = {}) => JSON.parse(JSON.stringify({
   direction: p.direction, targetPct: p.targetPct, clamped: p.clamped, wethWei: p.wethWei, amountInRaw: p.amountInRaw, limitRaw: p.limitRaw,
@@ -160,7 +174,9 @@ async function consecutiveAiFailures(ctx: EngineContext, accountId: string, excl
  * PENDING_APPROVAL and uncertain submissions keep it.
  */
 export async function runRebalance(ctx: EngineContext, accountId: string, trigger: Trigger) {
-  const st = await loadAccountState(ctx, accountId);
+  // Multi-asset: `st` becomes the traded asset's session and `c` that asset's market for the leg being executed.
+  let st = await loadAccountState(ctx, accountId);
+  let c = ctx;
   if (!st.policy || !st.policyRow) return { skipped: "NO_ACTIVE_POLICY" };
   if (!st.account.monitoringEnabled) return { skipped: "PAUSED" };
   if (await inCooldown(ctx.db, accountId)) return { skipped: "COOLDOWN" };
@@ -183,18 +199,54 @@ export async function runRebalance(ctx: EngineContext, accountId: string, trigge
     await audit("TRIGGER_DETECTED", "INFO", trigger.detail, { kind: trigger.kind, block: trigger.block });
     await transitionAction(ctx.db, action.id, ["TRIGGERED"], "PLANNING");
 
-    const snap = await readPortfolio(ctx, account, policy);
+    // v3 multi-asset: value everything, plan legs, execute ONE leg per action (sells first) through the same pipeline.
+    let legOpts: { leg?: PlanLeg; decimals?: number } = {};
+    let assetSymbol = "WETH";
+    let multiPortfolioUsd: string | null = null;
+    if (portfolioTargets(policy).multi) {
+      const mp = await multiPortfolio(ctx, accountId, account, policy);
+      multiPortfolioUsd = (Number(mp.assessment.totalCents) / 100).toFixed(2);
+      await audit("ALLOCATION", "INFO", `Allocation: ${describeAllocation(mp)}`, { weights: mp.assessment.weights, totalUsd: multiPortfolioUsd });
+      if (!mp.assessment.drifted) return finish(["PLANNING"], "NO_ACTION", "INFO", "Every asset is inside its drift band — no action");
+      const leg = mp.assessment.legs[0];
+      if (!leg) return finish(["PLANNING"], "NO_ACTION", "INFO", "Drift is below the minimum trade size — no action");
+      await audit("PLAN_LEGS", "INFO", `Rebalance plan: ${mp.assessment.legs.map((l) => `${l.side.toLowerCase()} $${(Number(l.usdCents) / 100).toFixed(2)} ${l.symbol}`).join(", ")}. Now: ${leg.side.toLowerCase()} ${leg.symbol}`,
+        { legs: mp.assessment.legs.map((l) => ({ ...l, usdCents: `${l.usdCents}` })) });
+      const asset = mp.rows.find((r) => r.symbol === leg.symbol)!;
+      if (asset.status !== "VERIFIED") {
+        // Simulated leg: oracle-priced fill in the paper ledger, capped like an autonomous trade, no budget, no chain.
+        const r = await paperFill(ctx, accountId, mp.rows, leg, usdToCents(policy.maxAutoTxUsd));
+        if (!r.filledCents) return finish(["PLANNING"], "NO_ACTION", "INFO", `Simulated ${leg.side.toLowerCase()} of ${leg.symbol} skipped: ${r.reason}`);
+        const usd = (Number(r.filledCents) / 100).toFixed(2), qty = (Number(r.qtyRaw) / 10 ** asset.decimals).toPrecision(6);
+        await transitionAction(ctx.db, action.id, ["PLANNING"], "PLANNING", { tier: "SIMULATED", reasons: ["PAPER_ASSET"], requestedUsdCents: r.filledCents,
+          plan: { direction: leg.side === "SELL" ? "SELL_ASSET" : "BUY_ASSET", asset: leg.symbol, tradeUsd: usd, targetPct: leg.targetPct, simulated: true } });
+        await audit("PAPER_FILL", "INFO", `Simulated ${leg.side === "SELL" ? "sale" : "purchase"}: ${qty} ${leg.symbol} for $${usd} at the Chainlink price — no on-chain trade (${leg.symbol} has no usable pool on this network)`,
+          { asset: leg.symbol, side: leg.side, usdCents: `${r.filledCents}`, qtyRaw: `${r.qtyRaw}`, simulated: true });
+        const after = await multiPortfolio(ctx, accountId, account, policy);
+        await transitionAction(ctx.db, action.id, ["PLANNING"], "CONFIRMED", { cooldownUntil: new Date(Date.now() + GUARDIAN_CONFIG.cooldownSec * 1000) });
+        await audit("SIMULATED_FILL", "SUCCESS", `Simulated fill recorded; allocation now ${describeAllocation(after)}`, { simulated: true });
+        return { actionId: action.id, state: "CONFIRMED" };
+      }
+      assetSymbol = asset.symbol;
+      st = { ...(await loadAccountState(ctx, accountId, asset.symbol)), policy, policyRow: st.policyRow };
+      c = marketFor(ctx, asset);
+      legOpts = { leg: { side: leg.side, usdCents: leg.usdCents, targetPct: leg.targetPct }, decimals: asset.decimals };
+    }
+
+    const snap = await readPortfolio(c, account, policy);
     const v = snap.assessment.valuation;
-    await audit("ALLOCATION", "INFO", `Allocation: ${pct(v.wethWeightBps)} WETH; band ${policy.ethMinPct}–${policy.ethMaxPct}%`, {
-      block: snap.blockNumber, wethWei: snap.wethWei, usdcRaw: snap.usdcRaw, wethUsd: fmtUsd18(v.wethUsd18), usdcUsd: fmtUsd18(v.usdcUsd18),
-      oracle: { ethUsd: snap.prices.wethUsd.answer, ethUsdAgeSec: snap.prices.wethUsd.ageSec, usdcUsd: snap.prices.usdcUsd.answer } });
-    if (snap.assessment.kind === "WITHIN_BAND") return finish(["PLANNING"], "NO_ACTION", "INFO", "Allocation within band — no action");
+    if (!legOpts.leg) {
+      await audit("ALLOCATION", "INFO", `Allocation: ${pct(v.wethWeightBps)} WETH; band ${policy.ethMinPct}–${policy.ethMaxPct}%`, {
+        block: snap.blockNumber, wethWei: snap.wethWei, usdcRaw: snap.usdcRaw, wethUsd: fmtUsd18(v.wethUsd18), usdcUsd: fmtUsd18(v.usdcUsd18),
+        oracle: { ethUsd: snap.prices.wethUsd.answer, ethUsdAgeSec: snap.prices.wethUsd.ageSec, usdcUsd: snap.prices.usdcUsd.answer } });
+      if (snap.assessment.kind === "WITHIN_BAND") return finish(["PLANNING"], "NO_ACTION", "INFO", "Allocation within band — no action");
+    }
 
     // Session usability, including D3 reauthorization on price rise.
-    let status: SessionStatus = await sessionStatus(ctx, st.account, st.session, st.compilation);
+    let status: SessionStatus = await sessionStatus(c, st.account, st.session, st.compilation);
     if (status === "ACTIVE" && st.compilation && reauthRequired(BigInt(st.compilation.authPriceAnswer), snap.prices.wethUsd.answer, GUARDIAN_CONFIG.reauthPriceRiseBps)) {
       await ctx.db.update(agentSessions).set({ status: "REAUTH_REQUIRED" }).where(eq(agentSessions.id, st.session!.id));
-      await audit("SESSION_REAUTH_REQUIRED", "WARNING", "WETH price rose ≥10% since authorization — owner must reauthorize the agent");
+      await audit("SESSION_REAUTH_REQUIRED", "WARNING", `${assetSymbol} price rose ≥10% since authorization — owner must reauthorize the agent`);
       status = "REAUTH_REQUIRED";
     }
     const used = await dailyUsedCents(ctx.db, accountId);
@@ -205,15 +257,16 @@ export async function runRebalance(ctx: EngineContext, accountId: string, trigge
     });
 
     // Provisional plan at the owner's target: the facts the agent decides on.
-    const provisional = await buildPlan(ctx, st, snap);
+    const provisional = await buildPlan(c, st, snap, legOpts);
     const provisionalRoute = routeFor(provisional);
 
     // AI decides intent inside the owner's band; deterministic code owns amounts, addresses, calldata, and authority.
     const agentCtx: AgentContext = {
       trigger: { kind: trigger.kind, detail: trigger.detail },
-      portfolio: { wethUsd: fmtUsd18(v.wethUsd18), usdcUsd: fmtUsd18(v.usdcUsd18), totalUsd: fmtUsd18(v.totalUsd18), wethWeightPct: fmtBps(v.wethWeightBps) },
+      portfolio: multiPortfolioUsd ? { wethUsd: fmtUsd18(v.wethUsd18), usdcUsd: fmtUsd18(v.usdcUsd18), totalUsd: multiPortfolioUsd, wethWeightPct: `${legOpts.leg!.side === "SELL" ? "over" : "under"}weight ${assetSymbol}` }
+        : { wethUsd: fmtUsd18(v.wethUsd18), usdcUsd: fmtUsd18(v.usdcUsd18), totalUsd: fmtUsd18(v.totalUsd18), wethWeightPct: fmtBps(v.wethWeightBps) },
       policy: { ethMinPct: policy.ethMinPct, ethMaxPct: policy.ethMaxPct, targetEthPct: policy.targetEthPct, maxAutoTxUsd: policy.maxAutoTxUsd, dailyBudgetUsd: policy.dailyBudgetUsd },
-      market: await marketContext(ctx, snap, provisional),
+      market: await marketContext(c, snap, provisional),
       proposedTrade: { direction: provisional.direction, usd: fmtUsd18(provisional.tradeUsd18), tier: provisionalRoute.tier, reasons: provisionalRoute.reasons,
         risk: { score: provisional.risk.score, classification: provisional.risk.classification, hardGates: provisional.risk.hardGates } },
       recentOutcomes: await recentOutcomes(ctx, accountId, action.id),
@@ -225,7 +278,7 @@ export async function runRebalance(ctx: EngineContext, accountId: string, trigge
     let decision: AgentDecision, targetPct = policy.targetEthPct, provider: string;
     if (ai.ok) {
       decision = ai.decision; provider = ai.provider;
-      if (ai.targetPct !== undefined) targetPct = ai.targetPct;
+      if (ai.targetPct !== undefined && !legOpts.leg) targetPct = ai.targetPct; // multi-asset legs keep the owner's per-asset targets
     } else {
       // Fail-safe, not fail-stop: a rule-based rebalance to the owner's target, executable only at Tier 1 / LOW risk.
       const prior = await consecutiveAiFailures(ctx, accountId, action.id, GUARDIAN_CONFIG.aiFailurePauseThreshold);
@@ -246,13 +299,13 @@ export async function runRebalance(ctx: EngineContext, accountId: string, trigge
     }
     if (decision.decision === "NO_ACTION") return finish(["PLANNING"], "NO_ACTION", "INFO", "Agent chose NO_ACTION");
 
-    let plan = targetPct === provisional.targetPct ? provisional : await buildPlan(ctx, st, snap, { targetPct });
+    let plan = legOpts.leg || targetPct === provisional.targetPct ? provisional : await buildPlan(c, st, snap, { targetPct });
     let route: RoutingDecision = plan === provisional ? provisionalRoute : routeFor(plan);
 
     // E7 partial step: a move that only exceeds the per-trade caps is stepped at Tier 1 instead of escalated.
     if (decision.decision === "REBALANCE" && policy.allowPartialAutonomy !== false
       && partialStepAllowed(route, plan.requestedUsdCents, usdToCents(policy.maxAutoTxUsd), GUARDIAN_CONFIG.partialAutonomyMaxMultiple)) {
-      const step = await buildPlan(ctx, st, snap, { targetPct, clamp: true });
+      const step = await buildPlan(c, st, snap, { targetPct, clamp: true, ...legOpts });
       const stepRoute = routeFor(step);
       if (stepRoute.tier === "TIER1_AGENT") {
         await audit("PARTIAL_STEP", "INFO", `Full move ≈ $${fmtUsd18(plan.tradeUsd18)} exceeds the per-trade cap; stepping at the cap now, the rest after the cooldown`);
@@ -260,7 +313,7 @@ export async function runRebalance(ctx: EngineContext, accountId: string, trigge
       }
     }
 
-    await audit("PLAN", "INFO", `Target: ${plan.targetPct}%; ${describeTrade(plan)}`);
+    await audit("PLAN", "INFO", `Target: ${plan.targetPct}%${legOpts.leg ? ` ${assetSymbol}` : ""}; ${describeTrade(plan, assetSymbol, legOpts.decimals)}`);
     await audit("QUOTE", "INFO", `Quote: ${plan.direction === "SELL_WETH" ? `${usdc(plan.quote.usdcRaw)} USDC out; minimum ${usdc(plan.limitRaw)}` : `${usdc(plan.quote.usdcRaw)} USDC in; maximum ${usdc(plan.limitRaw)}`} (${policy.maxSlippageBps} bps)${testnetNote}`,
       { block: plan.quote.blockNumber, pool: plan.quote.pool, feeTier: plan.quote.feeTier });
     await audit("RISK", plan.risk.classification === "LOW" ? "INFO" : "WARNING",
@@ -268,7 +321,7 @@ export async function runRebalance(ctx: EngineContext, accountId: string, trigge
 
     const { tier, reasons } = applyAgentStance(route,
       { escalate: decision.decision === "ESCALATE", aiFallback: provider === DETERMINISTIC_FALLBACK, riskClass: plan.risk.classification });
-    await transitionAction(ctx.db, action.id, ["PLANNING"], "PLANNING", { tier, reasons, plan: planJson(plan), requestedUsdCents: plan.requestedUsdCents });
+    await transitionAction(ctx.db, action.id, ["PLANNING"], "PLANNING", { tier, reasons, plan: planJson(plan, legOpts.leg ? { asset: assetSymbol, decimals: legOpts.decimals } : {}), requestedUsdCents: plan.requestedUsdCents });
     await audit("ROUTING", tier === "TIER3_REJECT" ? "FAILURE" : "INFO", `Authority: ${tier} — ${reasons.join(", ")}`, { tier, reasons, dailyUsedUsdCents: used, sessionStatus: status });
 
     if (tier === "TIER3_REJECT") {
@@ -284,25 +337,25 @@ export async function runRebalance(ctx: EngineContext, accountId: string, trigge
       return finish(["PLANNING"], "PENDING_APPROVAL", "WARNING", "Daily budget reached concurrently — awaiting master approval (Tier 2)");
     }
     await transitionAction(ctx.db, action.id, ["PLANNING"], "SIMULATING");
-    const { agentAccount } = await loadAgent(ctx, st.account, st.session!, st.compilation!);
+    const { agentAccount } = await loadAgent(c, st.account, st.session!, st.compilation!);
     const client = createSponsoredClient(agentAccount, ctx.chain, ctx.publicClient, ctx.pimlicoApiKey);
-    const call = swapCall(ctx, account, plan);
+    const call = swapCall(c, account, plan);
     // Bundler estimation runs full validation (permissions included) without broadcasting.
     const op = (await client.prepareUserOperation({ calls: [call] })) as UserOperation<"0.7">;
     op.signature = await agentAccount.signUserOperation(op);
-    const [sim] = await simulateHandleOps(ctx.publicClient, { beneficiary: account, blocks: [{ steps: [{ kind: "userop", label: "rebalance", op }] }], watchTokens: [ctx.network.usdc, ctx.network.weth] });
+    const [sim] = await simulateHandleOps(ctx.publicClient, { beneficiary: account, blocks: [{ steps: [{ kind: "userop", label: "rebalance", op }] }], watchTokens: [c.network.usdc, c.network.weth] });
     const moved = (token: Address, dir: "to" | "from") => (sim?.tokenTransfers ?? [])
       .filter((t) => t.token.toLowerCase() === token.toLowerCase() && t[dir].toLowerCase() === account.toLowerCase()).reduce((a, t) => a + t.value, 0n);
     const simOk = sim?.result === "EXECUTED_SUCCESS" && (plan.direction === "SELL_WETH"
-      ? moved(ctx.network.usdc, "to") >= plan.limitRaw
-      : moved(ctx.network.weth, "to") >= plan.wethWei && moved(ctx.network.usdc, "from") <= plan.limitRaw);
+      ? moved(c.network.usdc, "to") >= plan.limitRaw
+      : moved(c.network.weth, "to") >= plan.wethWei && moved(c.network.usdc, "from") <= plan.limitRaw);
     if (!simOk) {
       await releaseBudget(ctx.db, action.id);
       return finish(PRE_SUBMIT, "FAILED", "FAILURE", `Simulation failed: ${sim?.result} ${sim?.detail ?? ""}`.trim(), { error: sim?.detail });
     }
     await audit("SIMULATION_PASSED", "SUCCESS", plan.direction === "SELL_WETH"
-      ? `Simulation passed; predicted ${usdc(moved(ctx.network.usdc, "to"))} USDC ≥ minimum ${usdc(plan.limitRaw)}`
-      : `Simulation passed; ${weth(moved(ctx.network.weth, "to"))} WETH for ${usdc(moved(ctx.network.usdc, "from"))} USDC ≤ maximum ${usdc(plan.limitRaw)}`);
+      ? `Simulation passed; predicted ${usdc(moved(c.network.usdc, "to"))} USDC ≥ minimum ${usdc(plan.limitRaw)}`
+      : `Simulation passed; ${amt(moved(c.network.weth, "to"), legOpts.decimals)} ${assetSymbol} for ${usdc(moved(c.network.usdc, "from"))} USDC ≤ maximum ${usdc(plan.limitRaw)}`);
 
     // Persist intent before external submission (architecture §10).
     const [row] = await ctx.db.insert(userOperations).values({ actionId: action.id, accountId, sessionId: st.session!.id, authority: "AGENT_SESSION",
@@ -348,7 +401,9 @@ export async function finalizeRebalance(ctx: EngineContext, actionId: string, us
   const st = await loadAccountState(ctx, action.accountId);
   const account = st.account.address as Address;
   let snap: PortfolioSnapshot | null = null;
-  try { if (st.policy) snap = await readPortfolio(ctx, account, st.policy, { atLeastBlock: receipt.receipt.blockNumber }); } catch { /* valuation unavailable; receipt still recorded */ }
+  let valuationError: string | undefined;
+  try { if (st.policy) snap = await readPortfolio(ctx, account, st.policy, { atLeastBlock: receipt.receipt.blockNumber }); }
+  catch (e) { valuationError = (e as Error).message.slice(0, 300); /* valuation unavailable; receipt still recorded */ }
   const balancesAfter = snap ? { wethWei: snap.wethWei, usdcRaw: snap.usdcRaw } : null;
   await recordReceipt(ctx, userOperationId, receipt, { balancesAfter });
   const audit = (type: string, level: AuditLevel, message: string, data?: unknown) => appendAudit(ctx.db, { accountId: action.accountId, actionId, type, level, message, data });
@@ -361,7 +416,12 @@ export async function finalizeRebalance(ctx: EngineContext, actionId: string, us
     await audit("EXECUTION_FAILED", "FAILURE", "Included, but swap execution reverted (not an authorization failure)", { ...evidence, reason: receipt.reason });
     return;
   }
-  const allocation = snap ? ` allocation now ${pct(snap.assessment.valuation.wethWeightBps)} WETH` : "";
+  let allocation = snap ? ` allocation now ${pct(snap.assessment.valuation.wethWeightBps)} WETH`
+    : valuationError ? ` allocation unavailable (${valuationError})` : "";
+  if (st.policy && portfolioTargets(st.policy).multi) {
+    try { allocation = ` allocation now ${describeAllocation(await multiPortfolio(ctx, action.accountId, account, st.policy))}`; }
+    catch (e) { allocation = ` allocation unavailable (${(e as Error).message.slice(0, 200)})`; }
+  }
   const won = await transitionAction(ctx.db, actionId, ["PENDING", "SUBMITTING"], "CONFIRMED", { cooldownUntil: new Date(Date.now() + GUARDIAN_CONFIG.cooldownSec * 1000) });
   if (!won) return;
   await audit("CONFIRMED", "SUCCESS", `Confirmed in block ${receipt.receipt.blockNumber};${allocation}`, evidence);

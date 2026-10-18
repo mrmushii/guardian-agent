@@ -5,8 +5,9 @@ import { and, eq } from "drizzle-orm";
 import { smartAccounts } from "@guardian/db";
 import { createEngineContext, type EngineContext } from "@guardian/engine";
 
-let ctx: EngineContext | undefined;
-export const engine = () => (ctx ??= createEngineContext());
+// Kept on globalThis so dev hot reloads reuse one database pool instead of leaking a new one per reload.
+const g = globalThis as { __guardianEngine?: EngineContext };
+export const engine = () => (g.__guardianEngine ??= createEngineContext());
 
 const COOKIE = "guardian_session";
 const secret = () => { const s = process.env.AUTH_SECRET; if (!s || s.length < 32) throw new Error("AUTH_SECRET missing"); return s; };
