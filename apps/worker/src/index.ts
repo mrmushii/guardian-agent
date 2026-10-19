@@ -2,8 +2,9 @@
 import { and, eq } from "drizzle-orm";
 import { createPublicClient, erc20Abi, webSocket, type Address } from "viem";
 import pino from "pino";
-import { appendAudit, policies, smartAccounts, watcherCheckpoints } from "@guardian/db";
-import { createEngineContext, housekeeping, loadAccountState, readPortfolio, reconcile, runRebalance, fmtBps } from "@guardian/engine";
+import { appendAudit, inCooldown, policies, smartAccounts, watcherCheckpoints } from "@guardian/db";
+import { createEngineContext, describeAllocation, housekeeping, loadAccountState, multiPortfolio, readPortfolio, reconcile, runRebalance, fmtBps } from "@guardian/engine";
+import { portfolioTargets } from "@guardian/policy";
 
 const log = pino({ name: "guardian-worker", redact: ["*.apiKey", "*.privateKey", "*.encryptedKey"] });
 const ctx = createEngineContext();
@@ -17,6 +18,21 @@ async function monitoredAccounts() {
   return ctx.db.select({ id: smartAccounts.id, address: smartAccounts.address }).from(smartAccounts)
     .innerJoin(policies, and(eq(policies.accountId, smartAccounts.id), eq(policies.active, true)))
     .where(and(eq(smartAccounts.chainId, ctx.chain.id), eq(smartAccounts.monitoringEnabled, true)));
+}
+
+type CheckState = "checking" | "in_band" | "out_of_band" | "evaluating" | "cooldown" | "error";
+type Check = { at: string; block: string | null; state: CheckState; summary: string; nextCheckAt: string };
+const recent = new Map<string, Check[]>();
+
+/** Live status for the dashboard: the latest precheck plus a short history, written on every check. */
+async function recordCheck(accountId: string, block: bigint | null, state: CheckState, summary: string) {
+  const c: Check = { at: new Date().toISOString(), block: block?.toString() ?? null, state, summary, nextCheckAt: new Date(Date.now() + TICK_MS).toISOString() };
+  const list = [c, ...(recent.get(accountId) ?? []).filter((x) => x.state !== "checking")].slice(0, 10);
+  recent.set(accountId, list);
+  const lastCheck = { ...c, recent: list };
+  await ctx.db.insert(watcherCheckpoints).values({ accountId, lastBlock: block ?? 0n, heartbeatAt: new Date(), lastCheck })
+    .onConflictDoUpdate({ target: watcherCheckpoints.accountId, set: { ...(block !== null ? { lastBlock: block } : {}), heartbeatAt: new Date(), lastCheck } })
+    .catch((e) => log.warn({ err: (e as Error).message }, "could not record check"));
 }
 
 async function evaluate(accountId: string, trigger: { key: string; kind: string; detail?: string }) {
@@ -33,16 +49,31 @@ async function evaluate(accountId: string, trigger: { key: string; kind: string;
     }
     emptyNoted.delete(accountId);
     // Cheap deterministic precheck; the LLM is only woken for a meaningful change (band crossed).
-    const snap = await readPortfolio(ctx, st.account.address as Address, st.policy);
-    await ctx.db.insert(watcherCheckpoints).values({ accountId, lastBlock: snap.blockNumber, heartbeatAt: new Date() })
-      .onConflictDoUpdate({ target: watcherCheckpoints.accountId, set: { lastBlock: snap.blockNumber, heartbeatAt: new Date() } });
-    if (snap.assessment.kind === "WITHIN_BAND") return;
-    const weight = fmtBps(snap.assessment.valuation.wethWeightBps);
-    const detail = trigger.detail ?? (snap.assessment.kind === "SELL_WETH"
-      ? `WETH weight ${weight}% above maximum ${st.policy.ethMaxPct}%` : `WETH weight ${weight}% below minimum ${st.policy.ethMinPct}%`);
-    const res = await runRebalance(ctx, accountId, { key: trigger.key, kind: trigger.kind, detail, block: snap.blockNumber });
+    // Multi-asset policies check every asset's drift; legacy policies check the WETH band.
+    const account = st.account.address as Address;
+    let block: bigint, inBand: boolean, summary: string, detail: string;
+    if (portfolioTargets(st.policy).multi) {
+      const [mp, b] = await Promise.all([multiPortfolio(ctx, accountId, account, st.policy), ctx.publicClient.getBlockNumber()]);
+      block = b; inBand = !mp.assessment.drifted;
+      summary = `${describeAllocation(mp)}${inBand ? " — all within band" : ""}`;
+      const worst = [...mp.assessment.weights].sort((x, y) => Math.abs(y.driftPct) - Math.abs(x.driftPct))[0]!;
+      detail = trigger.detail ?? `${worst.symbol} at ${worst.pct.toFixed(1)}% vs target ${worst.targetPct}% (outside ±${mp.driftPct} pts)`;
+    } else {
+      const snap = await readPortfolio(ctx, account, st.policy);
+      const weight = fmtBps(snap.assessment.valuation.wethWeightBps);
+      block = snap.blockNumber; inBand = snap.assessment.kind === "WITHIN_BAND";
+      summary = `WETH ${weight}% (band ${st.policy.ethMinPct}–${st.policy.ethMaxPct}%)${inBand ? " — within band" : ""}`;
+      detail = trigger.detail ?? (snap.assessment.kind === "SELL_WETH"
+        ? `WETH weight ${weight}% above maximum ${st.policy.ethMaxPct}%` : `WETH weight ${weight}% below minimum ${st.policy.ethMinPct}%`);
+    }
+    if (inBand) { await recordCheck(accountId, block, "in_band", summary); return; }
+    if (await inCooldown(ctx.db, accountId)) { await recordCheck(accountId, block, "cooldown", `${summary} — waiting for the cooldown after the last trade`); return; }
+    await recordCheck(accountId, block, "evaluating", `${summary} — out of band, deciding now`);
+    const res = await runRebalance(ctx, accountId, { key: trigger.key, kind: trigger.kind, detail, block });
+    await recordCheck(accountId, block, "out_of_band", `${summary} — ${"state" in res ? `action ${String(res.state).toLowerCase().replaceAll("_", " ")}` : `skipped (${String(res.skipped).toLowerCase().replaceAll("_", " ")})`}`);
     log.info({ accountId, trigger: trigger.key, res }, "rebalance evaluated");
   } catch (e) {
+    await recordCheck(accountId, null, "error", `Check failed (fail closed): ${(e as Error).message.split(String.fromCharCode(10))[0]!.slice(0, 200)}`);
     log.error({ accountId, err: (e as Error).message }, "evaluation failed (fail closed)");
   } finally {
     inflight.delete(accountId);

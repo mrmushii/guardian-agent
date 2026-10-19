@@ -18,6 +18,7 @@ export type Dash = {
   policyAheadOfSession: boolean;
   multi: { totalUsd: string; drifted: boolean; driftPct: number; weights: { symbol: string; pct: number; targetPct: number; driftPct: number; status: string | null }[]; legs: { symbol: string; side: string; usd: string }[] } | { error: string } | null;
   sessions: { asset: string; status: string; permissionId: string; validUntil: string }[];
+  watch: Watch;
   agent: { models: string[] };
   demo: { enabled: boolean; walletB: { address: string; wethUsd: number; usdc: number } | null };
   session: { status: string; onChain: string; permissionId: string; validUntil: string; authorizeUserOpHash: string | null } | null;
@@ -29,6 +30,8 @@ export type Dash = {
   operations: { id: string; authority: string; purpose: string; state: string; userOpHash: string | null; transactionHash: string | null; block: string | null; userOpSuccess: boolean | null; explorer: string | null; createdAt: string }[];
   pendingSignatures: { id: string; purpose: string; userOpHash: string; actionId: string | null }[];
 };
+export type Check = { at: string; block: string | null; state: "checking" | "in_band" | "out_of_band" | "evaluating" | "cooldown" | "error"; summary: string; nextCheckAt: string };
+export type Watch = { heartbeatAt: string | null; lastBlock: string | null; lastCheck: (Check & { recent?: Check[] }) | null; workerOnline: boolean };
 export type Ev = { id: string; type: string; level: "INFO" | "SUCCESS" | "WARNING" | "FAILURE"; message: string; data: Record<string, unknown> | null; createdAt: string; actionId: string | null };
 
 export const api = async <T,>(path: string, body?: unknown): Promise<T> => {

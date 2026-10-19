@@ -1,4 +1,5 @@
-import { recentAudit } from "@guardian/db";
+import { eq } from "drizzle-orm";
+import { recentAudit, watcherCheckpoints } from "@guardian/db";
 import { requireAccount, route } from "@/lib/server";
 
 export const dynamic = "force-dynamic";
@@ -12,7 +13,7 @@ export const GET = route(async (req: Request) => {
   const stream = new ReadableStream({
     start(controller) {
       const send = (s: string) => { try { controller.enqueue(enc.encode(s)); } catch { clearInterval(timer); } };
-      let polling = false;
+      let polling = false, lastBeat = 0;
       const tick = async () => {
         if (polling) return;
         polling = true;
@@ -21,7 +22,13 @@ export const GET = route(async (req: Request) => {
           if (rows.length) {
             cursor = rows[0]!.id;
             send(`data: ${JSON.stringify(rows.reverse(), (_, v) => (typeof v === "bigint" ? `${v}` : v))}\n\n`);
-          } else send(": ping\n\n");
+          }
+          // Live watch status: pushed whenever the worker records a new check.
+          const [cp] = await ctx.db.select().from(watcherCheckpoints).where(eq(watcherCheckpoints.accountId, account.id));
+          if (cp && cp.heartbeatAt.getTime() !== lastBeat) {
+            lastBeat = cp.heartbeatAt.getTime();
+            send(`event: watch\ndata: ${JSON.stringify({ heartbeatAt: cp.heartbeatAt, lastBlock: `${cp.lastBlock}`, lastCheck: cp.lastCheck, workerOnline: true })}\n\n`);
+          } else if (!rows.length) send(": ping\n\n");
         } catch { /* transient DB error: next tick retries */ }
         finally { polling = false; }
       };

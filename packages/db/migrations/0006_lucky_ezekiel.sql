@@ -1,0 +1,1 @@
+ALTER TABLE "watcher_checkpoints" ADD COLUMN "last_check" jsonb;

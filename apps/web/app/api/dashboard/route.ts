@@ -1,6 +1,6 @@
 import { desc, eq, sql } from "drizzle-orm";
 import type { Address } from "viem";
-import { agentActions, dailyUsedCents, transactions, userOperations, utcDay } from "@guardian/db";
+import { agentActions, dailyUsedCents, transactions, userOperations, utcDay, watcherCheckpoints } from "@guardian/db";
 import { GUARDIAN_CONFIG, portfolioTargets } from "@guardian/policy";
 import { agentOpsInWindow, agentOpsUsed, isTwoWay, loadAccountState, pendingSignatures, readPortfolio, sessionStatus, fmtBps, fmtUsd18, explorerTx, walletBBalances, multiPortfolio, loadSessions } from "@guardian/engine";
 import { json, requireAccount, route } from "@/lib/server";
@@ -38,6 +38,9 @@ export const GET = route(async (req: Request) => {
     } catch (e) { multi = { error: (e as Error).message.split(String.fromCharCode(10))[0] }; }
   }
   const sessions = (await loadSessions(ctx, account.id)).map((x) => ({ asset: x.session.asset, status: x.session.status, permissionId: x.session.permissionId, validUntil: x.session.validUntil }));
+  const [cp] = await ctx.db.select().from(watcherCheckpoints).where(eq(watcherCheckpoints.accountId, account.id));
+  const watch = cp ? { heartbeatAt: cp.heartbeatAt, lastBlock: cp.lastBlock, lastCheck: cp.lastCheck, workerOnline: Date.now() - cp.heartbeatAt.getTime() < 45_000 }
+    : { heartbeatAt: null, lastBlock: null, lastCheck: null, workerOnline: false };
   const onChain = await sessionStatus(ctx, st.account, st.session, st.compilation).catch(() => "UNKNOWN");
   const actions = await ctx.db.select().from(agentActions).where(eq(agentActions.accountId, account.id)).orderBy(desc(agentActions.createdAt)).limit(30);
   const outcomes = await ctx.db.select({ state: agentActions.state, tier: agentActions.tier, n: sql<number>`count(*)::int` }).from(agentActions)
@@ -58,6 +61,7 @@ export const GET = route(async (req: Request) => {
     policyVersion: st.policyRow?.version ?? null,
     multi,
     sessions,
+    watch,
     // The owner saved limits that the on-chain permission does not have yet: they must sign a new authorization.
     policyAheadOfSession: !!(st.session && st.policyRow && st.session.policyId !== st.policyRow.id),
     agent: { models: ctx.models.map((m) => m.name) },

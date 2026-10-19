@@ -1,0 +1,52 @@
+/* Live strip: what the agent is doing right now */
+.live { display: flex; gap: 12px; align-items: flex-start; padding: 12px 14px; border-radius: var(--radius-md); margin-bottom: 14px;
+  background: var(--good-wash); border: 1px solid color-mix(in srgb, var(--good) 30%, transparent); }
+.busy { background: var(--accent-wash); border-color: color-mix(in srgb, var(--accent) 40%, transparent); }
+.alert { background: var(--warn-wash); border-color: color-mix(in srgb, var(--warn) 40%, transparent); }
+.offline { background: var(--warn-wash); border-color: color-mix(in srgb, var(--warn) 45%, transparent); }
+.paused { background: var(--glass); border-color: var(--line); }
+.live > div { display: grid; gap: 2px; min-width: 0; }
+.live b { font-size: 0.92rem; }
+.live b small { font-weight: 500; color: var(--ink-2); font-size: 0.8rem; }
+.live span { color: var(--ink-2); font-size: 0.84rem; overflow-wrap: anywhere; }
+.liveBody { flex: 1; }
+.dotLive, .dotBusy, .dotWarn, .dotIdle { flex: none; width: 10px; height: 10px; border-radius: 50%; margin-top: 5px; }
+.dotLive { background: var(--good); box-shadow: 0 0 0 0 var(--good); animation: beat 2s infinite; }
+.dotBusy { background: var(--accent-2); animation: beat 0.9s infinite; box-shadow: 0 0 0 0 var(--accent-2); }
+.dotWarn { background: var(--warn); }
+.dotIdle { background: var(--ink-3); }
+@keyframes beat { 70% { box-shadow: 0 0 0 8px transparent; } 100% { box-shadow: 0 0 0 0 transparent; } }
+.recent { margin-top: 6px; font-size: 0.8rem; }
+.recent summary { cursor: pointer; color: var(--ink-2); font-weight: 650; }
+.recent ol { list-style: none; margin: 8px 0 0; padding: 0; display: grid; gap: 4px; max-height: 220px; overflow-y: auto; }
+.recent li { display: grid; grid-template-columns: 64px 92px minmax(0, 1fr); gap: 8px; align-items: baseline; }
+.recent time { font-family: var(--font-mono), monospace; color: var(--ink-3); font-size: 0.74rem; }
+.recent em { font-style: normal; font-weight: 700; font-size: 0.72rem; }
+.st_in_band { color: var(--good); } .st_out_of_band, .st_error { color: var(--bad); } .st_evaluating, .st_checking { color: var(--accent); } .st_cooldown { color: var(--warn); }
+.livePill { color: var(--accent-2); font-weight: 750; }
+
+/* Current vs last decision */
+.current { }
+.last { opacity: 0.95; }
+.lastLabel { margin: 0 0 8px; font-size: 0.72rem; text-transform: uppercase; letter-spacing: 0.07em; color: var(--ink-3); font-weight: 700; }
+.inProgress { margin: 4px 0 0; font-size: 0.78rem; color: var(--accent-2); font-weight: 650; animation: pulse 1.4s ease-in-out infinite; }
+@keyframes pulse { 50% { opacity: 0.4; } }
+.allSteps > summary { cursor: pointer; font-weight: 650; color: var(--ink-2); font-size: 0.86rem; margin: 4px 0 10px; }
+
+/* "Show what the AI thought" */
+.thoughts { margin-top: 10px; font-size: 0.86rem; }
+.thoughts > summary { cursor: pointer; font-weight: 700; color: var(--accent); list-style: none; display: inline-flex; gap: 6px; align-items: center; }
+.thoughts > summary::before { content: "▸"; transition: transform 0.2s; }
+.thoughts[open] > summary::before { transform: rotate(90deg); }
+.thoughts > summary::-webkit-details-marker { display: none; }
+.thoughtsBody { display: grid; gap: 10px; margin-top: 10px; padding: 12px; border-radius: var(--radius-sm); background: var(--glass); border: 1px solid var(--line); color: var(--ink); }
+.meta { margin: 0; color: var(--ink-3); font-size: 0.78rem; }
+.reasoning pre { margin: 6px 0 0; max-height: 280px; overflow: auto; white-space: pre-wrap; font-family: var(--font-mono), monospace; font-size: 0.78rem; line-height: 1.55; color: var(--ink-2);
+  background: var(--glass-strong); border-radius: var(--radius-sm); padding: 10px 12px; }
+.reasoningHead { display: flex; justify-content: space-between; align-items: center; }
+.reasoningHead button { font-size: 0.74rem; padding: 2px 10px; }
+.inputs dl { display: grid; gap: 4px; margin: 6px 0 0; }
+.inputs dl div { display: grid; grid-template-columns: 120px minmax(0, 1fr); gap: 10px; }
+.inputs dt { color: var(--ink-3); font-size: 0.78rem; }
+.inputs dd { margin: 0; font-size: 0.8rem; overflow-wrap: anywhere; }
+@media (max-width: 560px) { .inputs dl div { grid-template-columns: 1fr; gap: 0; } .recent li { grid-template-columns: 56px 1fr; } .recent li span { grid-column: 1 / -1; } }

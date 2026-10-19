@@ -190,6 +190,8 @@ export const watcherCheckpoints = pgTable("watcher_checkpoints", {
   accountId: uuid("account_id").primaryKey().references(() => smartAccounts.id),
   lastBlock: bigint("last_block", { mode: "bigint" }).notNull(),
   heartbeatAt: timestamp("heartbeat_at", { withTimezone: true }).notNull().defaultNow(),
+  /** Latest precheck result for the live dashboard: { at, block, state, inBand, summary, nextCheckAt, recent[] }. */
+  lastCheck: jsonb("last_check"),
 });
 
 /** Owner-added tokens (beyond the built-in registry), with the result of the last on-chain verification. */

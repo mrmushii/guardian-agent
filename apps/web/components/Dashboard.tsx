@@ -97,6 +97,8 @@ export default function Dashboard() {
         clearTimeout(refresh);
         refresh = setTimeout(() => { void loadDash(); if (rows.some((r) => r.type === "CONFIRMED")) void loadInsights(); }, 400);
       };
+      // Live watch status from the worker: updates the "what is happening now" strip without a full reload.
+      es.addEventListener("watch", (m) => { const w = JSON.parse((m as MessageEvent).data) as Dash["watch"]; setDash((prev) => (prev ? { ...prev, watch: w } : prev)); });
       es.onerror = () => { live.current = false; };
     } catch { live.current = false; }
     return () => { es?.close(); live.current = false; clearTimeout(refresh); };
