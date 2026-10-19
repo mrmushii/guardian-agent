@@ -54,7 +54,8 @@ describe("assessMulti", () => {
       expect(Math.abs(a.weights.reduce((s, w) => s + w.pct, 0) - 100)).toBeLessThan(0.01);
       if (!a.drifted) continue;
       const after = h.map((x) => { const l = a.legs.find((y) => y.symbol === x.symbol); return l ? (l.side === "BUY" ? x.usdCents + l.usdCents : x.usdCents - l.usdCents) : x.usdCents; });
-      for (const [j, t] of [[0, 40], [1, 20]] as const) expect(Math.abs(Number((after[j]! * 10_000n) / a.totalCents) / 100 - t)).toBeLessThan(0.05);
+      // Within one cent of target (integer cents: a tiny portfolio cannot hit a percentage exactly).
+      for (const [j, t] of [[0, 40n], [1, 20n]] as const) expect(Math.abs(Number(after[j]! * 100n - t * a.totalCents))).toBeLessThanOrEqual(100);
     }
   });
 });
