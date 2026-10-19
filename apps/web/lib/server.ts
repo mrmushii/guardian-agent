@@ -13,7 +13,8 @@ const COOKIE = "guardian_session";
 const secret = () => { const s = process.env.AUTH_SECRET; if (!s || s.length < 32) throw new Error("AUTH_SECRET missing"); return s; };
 const sign = (payload: string) => createHmac("sha256", secret()).update(payload).digest("base64url");
 
-export interface Session { userId: string; wallet: string; exp: number }
+/** `sandbox` marks the testnet Judge Sandbox login: it can watch and drive the demo, not change owner settings. */
+export interface Session { userId: string; wallet: string; exp: number; sandbox?: boolean }
 
 export async function setSession(s: Session) {
   const payload = Buffer.from(JSON.stringify(s)).toString("base64url");
@@ -42,6 +43,13 @@ export async function requireAccount() {
   const [account] = await e.db.select().from(smartAccounts).where(and(eq(smartAccounts.userId, s.userId), eq(smartAccounts.chainId, e.chain.id)));
   if (!account) throw new HttpError(404, "No smart account registered for this wallet");
   return { session: s, account, ctx: e };
+}
+
+/** Owner-only actions (limits, monitoring, authorize/revoke, signatures, approvals, assets) are closed to Judge Sandbox sessions. */
+export async function requireOwner() {
+  const r = await requireAccount();
+  if (r.session.sandbox) throw new HttpError(403, "Read-only in Judge Sandbox — sign in with the owner wallet to change settings");
+  return r;
 }
 
 export const json = (data: unknown, status = 200) =>

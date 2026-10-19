@@ -8,6 +8,7 @@
     "start": "next start -p 3000"
   },
   "dependencies": {
+    "@guardian/agent": "workspace:*",
     "@guardian/chain": "workspace:*",
     "@guardian/db": "workspace:*",
     "@guardian/engine": "workspace:*",

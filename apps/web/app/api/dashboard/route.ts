@@ -17,7 +17,7 @@ async function demoBalances(ctx: Parameters<typeof walletBBalances>[0], fresh = 
 }
 
 export const GET = route(async (req: Request) => {
-  const { account, ctx } = await requireAccount();
+  const { account, ctx, session: auth } = await requireAccount();
   const st = await loadAccountState(ctx, account.id);
   let portfolio: Record<string, unknown> | { error: string };
   try {
@@ -54,6 +54,7 @@ export const GET = route(async (req: Request) => {
 
   return json({
     network: { chainId: ctx.chain.id, name: ctx.chain.name, isTestnet: ctx.network.isTestnet },
+    sandbox: !!auth.sandbox,
     identities: { masterOwner: account.ownerAddress, smartAccount: account.address, entryPoint: account.entryPoint, kernelVersion: account.kernelVersion,
       sessionSigner: st.session?.signerAddress ?? null },
     monitoring: { enabled: account.monitoringEnabled, pausedReason: account.pausedReason },

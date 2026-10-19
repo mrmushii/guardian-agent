@@ -6,7 +6,7 @@ import { KernelV3_3AccountAbi } from "@zerodev/sdk";
 import { agentActions, agentSessions, appendAudit, policyCompilations, releaseBudget, transitionAction, userOperations } from "@guardian/db";
 import { GUARDIAN_CONFIG, compilePolicy, portfolioTargets } from "@guardian/policy";
 import { readReferencePrices } from "@guardian/oracle";
-import { CURRENT_PERMISSION_VERSION, RATE_LIMIT_WITH_RESET, authorizeAgentCallsMulti, buildAgentPermission, encryptSessionKey, revokeAgentCallsMulti, type AssetGrant, type HexCall } from "@guardian/account";
+import { CURRENT_PERMISSION_VERSION, KERNEL_EXECUTE_SELECTOR, RATE_LIMIT_WITH_RESET, authorizeAgentCallsMulti, buildAgentPermission, encryptSessionKey, revokeAgentCallsMulti, type AssetGrant, type HexCall } from "@guardian/account";
 import type { EngineContext } from "./context.js";
 import { loadAccountState, loadAgent, loadSessions } from "./state.js";
 import { readPortfolio } from "./portfolio.js";
@@ -36,9 +36,10 @@ export async function prepareAuthorization(ctx: EngineContext, accountId: string
   const st = await loadAccountState(ctx, accountId);
   if (!st.policy || !st.policyRow) throw new Error("No active policy");
   const live = await loadSessions(ctx, accountId);
-  const blocking = live.find((x) => x.session.status !== "PENDING_AUTHORIZATION");
-  if (blocking) throw new Error(`Session already ${blocking.session.status}; revoke it first`);
-  for (const x of live) await ctx.db.update(agentSessions).set({ status: "ABANDONED" }).where(eq(agentSessions.id, x.session.id));
+  // An installed permission (e.g. signing new limits) is replaced in the same owner batch: uninstall first, then install.
+  // Uninstalling does not bump the Kernel validation nonce, so the install below stays valid in one UserOperation.
+  const replacing = await installedGrants(ctx, st.account, live.filter((x) => x.session.status !== "PENDING_AUTHORIZATION" && x.compilation));
+  for (const x of live.filter((x) => x.session.status === "PENDING_AUTHORIZATION")) await ctx.db.update(agentSessions).set({ status: "ABANDONED" }).where(eq(agentSessions.id, x.session.id));
 
   const account = st.account.address as Address;
   const symbols = portfolioTargets(st.policy).assets.map((a) => a.symbol).filter((s) => s !== "USDC");
@@ -84,13 +85,28 @@ export async function prepareAuthorization(ctx: EngineContext, accountId: string
     created.push({ asset: a.symbol, sessionId: session!.id, permissionId, compiled });
   }
   const validationNonce = await ctx.publicClient.readContract({ address: account, abi: KernelV3_3AccountAbi, functionName: "currentNonce" });
-  const calls = await authorizeAgentCallsMulti(n, account, grants, usdcAllowance, validationNonce);
+  const calls = [...(replacing.length ? await revokeAgentCallsMulti(n, account, replacing) : []), ...(await authorizeAgentCallsMulti(n, account, grants, usdcAllowance, validationNonce))];
   const prepared = await storeForSignature(ctx, { accountId, purpose: "AUTHORIZE", owner: st.account.ownerAddress as Address, calls, sessionId: created[0]!.sessionId });
   await appendAudit(ctx.db, { accountId, type: "AUTHORIZATION_PREPARED", level: "INFO",
-    message: `Authorization prepared for ${created.map((x) => x.asset).join(", ")}: ${created.map((x) => `${x.asset} sell ≤ ${x.compiled.maxAmountInWei} raw/op, buy ≤ ${Number(x.compiled.maxUsdcInRaw) / 1e6} USDC/op`).join("; ")}; ${S.maxOpsPerWindow} ops per ${S.windowSec / 3600} h per asset`,
+    message: `${replacing.length ? "Replacement authorization" : "Authorization"} prepared for ${created.map((x) => x.asset).join(", ")}: ${created.map((x) => `${x.asset} sell ≤ ${x.compiled.maxAmountInWei} raw/op, buy ≤ ${Number(x.compiled.maxUsdcInRaw) / 1e6} USDC/op`).join("; ")}; ${S.maxOpsPerWindow} ops per ${S.windowSec / 3600} h per asset`,
     data: { sessions: created.map((x) => ({ asset: x.asset, permissionId: x.permissionId })) } });
   const first = created[0]!;
   return { ...prepared, sessionId: first.sessionId, permissionId: first.permissionId, compiled: first.compiled, assets: created.map((x) => x.asset) };
+}
+
+/** Permissions of these sessions still installed on-chain (execute access granted); uninstalling a missing one would revert the batch. */
+async function installedGrants(ctx: EngineContext, account: Awaited<ReturnType<typeof loadAccountState>>["account"], sessions: Awaited<ReturnType<typeof loadSessions>>) {
+  const grants: { permission: Awaited<ReturnType<typeof loadAgent>>["permission"]; token: Address }[] = [];
+  for (const x of sessions) {
+    if (!x.compilation) continue;
+    const m = x.session.asset === "WETH" ? ctx : marketFor(ctx, await assetBySymbolFor(ctx, account.id, x.session.asset));
+    const vId = `0x02${x.session.permissionId.slice(2).padEnd(40, "0")}` as Hex;
+    const installed = await ctx.publicClient.readContract({ address: account.address as Address, abi: KernelV3_3AccountAbi, functionName: "isAllowedSelector", args: [vId, KERNEL_EXECUTE_SELECTOR] });
+    if (!installed) continue;
+    const { permission } = await loadAgent(m, account, x.session, x.compilation);
+    grants.push({ permission, token: m.network.weth });
+  }
+  return grants;
 }
 
 /** "Revoke Agent": removes execute access and uninstalls every per-asset permission, clearing each router allowance. */
@@ -98,12 +114,8 @@ export async function prepareRevocation(ctx: EngineContext, accountId: string) {
   const st = await loadAccountState(ctx, accountId);
   const live = (await loadSessions(ctx, accountId)).filter((x) => x.session.status !== "PENDING_AUTHORIZATION" && x.compilation);
   if (!live.length) throw new Error("No authorized session to revoke");
-  const grants = [];
-  for (const x of live) {
-    const m = x.session.asset === "WETH" ? ctx : marketFor(ctx, await assetBySymbolFor(ctx, accountId, x.session.asset));
-    const { permission } = await loadAgent(m, st.account, x.session, x.compilation!);
-    grants.push({ permission, token: m.network.weth });
-  }
+  const grants = await installedGrants(ctx, st.account, live);
+  if (!grants.length) throw new Error("The agent permission is no longer installed on-chain — nothing to revoke");
   const calls = await revokeAgentCallsMulti(ctx.network, st.account.address as Address, grants);
   return storeForSignature(ctx, { accountId, purpose: "REVOKE", owner: st.account.ownerAddress as Address, calls, sessionId: live[0]!.session.id });
 }

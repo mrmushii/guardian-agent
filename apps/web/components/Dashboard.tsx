@@ -9,7 +9,7 @@ import { agentMode, api, short, type Dash, type Ev } from "./console/model";
 import { AgentOrb, StatusHero, YourTasks, type Ctl } from "./console/Hero";
 import { AgentThinking } from "./console/Thinking";
 import { Guardrails } from "./console/Guardrails";
-import { SimulatePanel } from "./console/Interact";
+import { AdversarialLabPanel, SimulatePanel } from "./console/Interact";
 import { History } from "./console/History";
 import { Onboarding, seenOnboarding } from "./console/Onboarding";
 import { CommandPalette, Sidebar, VIEWS, type Command, type View } from "./console/Shell";
@@ -135,6 +135,19 @@ export default function Dashboard() {
     await api("/api/auth/verify", { message: msg, signature: await signText(address, msg) });
     await loadEvents(false); void loadInsights();
   });
+  /** Testnet only: no wallet needed; the server opens a sandbox session on the live demo account. */
+  const sandboxSignIn = () => run("sandbox", async () => {
+    const r = await api<{ smartAccount: string }>("/api/auth/demo", {});
+    await loadEvents(false); void loadInsights();
+    return `Entered Judge Sandbox — viewing live Base Sepolia smart account ${short(r.smartAccount)} (owner signatures still require the master wallet)`;
+  });
+
+  /** Ends this session (owner or sandbox) and returns to the sign-in card, where either login can be chosen. */
+  const signOut = () => run("signout", async () => {
+    await api("/api/auth/logout", {});
+    setDash(null); setEvents([]); setProactive([]); setInsights(null); cursor.current = "0"; setNeedsLogin(true);
+    return "Signed out — choose the owner wallet or the Judge Sandbox";
+  });
 
   /** Master operations: the server prepares, the owner's wallet signs the exact userOpHash, the server verifies and submits. */
   const masterSign: Ctl["masterSign"] = async (prepared: { userOperationId: string; userOpHash: Hex }, done: string) => {
@@ -166,6 +179,7 @@ export default function Dashboard() {
       { id: "limits", label: "Edit limits", icon: "limits", run: () => setView("limits"), keywords: "policy band target budget cap" },
       { id: "ask-why", label: "Ask: why did you trade last time?", icon: "agent", run: () => { setPendingAsk("Why did you trade last time?"); setView("agent"); } },
       { id: "ask-how", label: "Ask: how is my portfolio doing?", icon: "agent", run: () => { setPendingAsk("How is my portfolio doing?"); setView("agent"); } },
+      { id: "signout", label: dash.sandbox ? "Leave Judge Sandbox" : "Sign out", hint: "switch account", icon: "hand", run: () => void signOut(), keywords: "logout sandbox owner switch account" },
       { id: "theme", label: "Toggle light / dark theme", icon: "sun", run: toggleTheme, keywords: "appearance" },
       { id: "help", label: "How Guardian works", icon: "help", run: () => setHelp(true), keywords: "onboarding guide" },
     ];
@@ -188,6 +202,8 @@ export default function Dashboard() {
           <div className={s.feature}><Icon name="hand" /> <span>Bigger trades wait for your signature. Pause or revoke anytime.</span></div>
         </div>
         <button className="primary" onClick={signIn} disabled={busy === "signin"} style={{ width: "100%" }}>{busy === "signin" ? "Waiting for wallet…" : "Sign in with owner wallet"}</button>
+        <button onClick={sandboxSignIn} disabled={!!busy} style={{ width: "100%", marginTop: 10 }}>{busy === "sandbox" ? "Opening sandbox…" : "Enter Judge Sandbox (Base Sepolia live account)"}</button>
+        <p className={s.fine}>No wallet needed. The sandbox can watch, chat, simulate market moves and run the agent; changing limits or signing stays with the owner.</p>
         {notice && <p className={notice.kind === "err" ? s.toastErr : s.toastOk} role="status">{notice.text}</p>}
       </div>
     </main>
@@ -204,6 +220,10 @@ export default function Dashboard() {
     <div className={sh.app}>
       <Sidebar dash={dash} mode={mode} view={view} setView={(v) => { setView(v); if (v === "agent") setUnread(0); }} onPause={() => void pause()} busy={!!busy} onPalette={() => setPalette(true)} unread={unread} />
       <main className={sh.main}>
+        {dash.sandbox && <div className={`glass ${s.toast} ${s.row}`} role="note" style={{ justifyContent: "space-between", alignItems: "center" }}>
+          <span>Judge Sandbox · live Base Sepolia account {short(dash.identities.smartAccount)} · settings are read-only</span>
+          <button disabled={!!busy} onClick={signOut}>{busy === "signout" ? "Signing out…" : "Switch to owner wallet"}</button>
+        </div>}
         {notice && <p className={`glass ${s.toast} ${notice.kind === "err" ? s.toastErr : s.toastOk}`} role="status">{notice.text}</p>}
 
         {view === "overview" && <>
@@ -265,10 +285,11 @@ export default function Dashboard() {
                   <button onClick={toggleTheme}><Icon name="sun" size={16} /> Toggle theme</button>
                   <button onClick={() => setHelp(true)}><Icon name="help" size={16} /> How Guardian works</button>
                   <button onClick={() => setPalette(true)}><Icon name="search" size={16} /> Commands <kbd>⌘K</kbd></button>
+                  <button disabled={!!busy} onClick={signOut}>{busy === "signout" ? "Signing out…" : dash.sandbox ? "Leave sandbox" : "Sign out"}</button>
                 </div>
               </section>
             </div>
-            <div className={s.col}><SimulatePanel {...ctl} /></div>
+            <div className={s.col}><SimulatePanel {...ctl} /><AdversarialLabPanel {...ctl} /></div>
           </div>
         </>}
       </main>

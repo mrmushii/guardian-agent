@@ -1,6 +1,6 @@
 "use client";
 import s from "./console.module.css";
-import { api, until, usdcFmt, weth } from "./model";
+import { api, short, until, usdcFmt, weth } from "./model";
 import type { Ctl } from "./Hero";
 
 /** What the agent is allowed to do, as the smart account enforces it. */
@@ -49,6 +49,25 @@ export function Guardrails({ dash, busy, run, masterSign, onEdit }: Ctl & { onEd
             <div key={k.permissionId} className={s.limitRow}><span>{k.asset} ↔ USDC</span><strong>{k.status === "ACTIVE" ? "active" : k.status.replaceAll("_", " ").toLowerCase()} · <span className="hash">{k.permissionId}</span></strong></div>
           ))}
         </div>
+      )}
+      {sess && c && pol && (
+        <details style={{ marginTop: 14 }}>
+          <summary style={{ cursor: "pointer", fontWeight: 650 }}>Inspect compiled on-chain permission spec (USD → EVM)</summary>
+          <div className={s.limits} style={{ marginTop: 10 }}>
+            <div className={s.limitRow}><span>Sell ceiling formula</span><span className="hash">floor(${pol.maxAutoTxUsd} / (P_auth × (1 + b)) × 10^18)</span></div>
+            <div className={s.limitRow}><span>Authorization price P_auth</span><strong>${c.authPrice.toFixed(2)} · b = +{(c.bufferBps / 100).toFixed(0)}% · re-auth at ${c.reauthAtPrice.toFixed(0)}</strong></div>
+            <div className={s.limitRow}><span>exactInputSingle · amountIn (word 4) ≤</span><strong><span className="hash">{c.maxAmountInWei}</span> wei ({weth(c.maxAmountInWei)} WETH)</strong></div>
+            {c.twoWay && <div className={s.limitRow}><span>exactOutputSingle · amountInMaximum (word 5) ≤</span><strong><span className="hash">{c.maxUsdcInRaw}</span> raw ({usdcFmt(c.maxUsdcInRaw)} USDC)</strong></div>}
+            <div className={s.limitRow}><span>CallPolicy target</span><strong>Uniswap V3 SwapRouter02 · {c.twoWay ? "exactInputSingle, exactOutputSingle" : "exactInputSingle"} only · value 0</strong></div>
+            <div className={s.limitRow}><span>Pinned fields</span><strong>tokenIn, tokenOut, fee tier, sqrtPriceLimitX96 = 0</strong></div>
+            <div className={s.limitRow}><span>recipient (word 3) ==</span><strong className="hash">{short(dash.identities.smartAccount)} (self only)</strong></div>
+            <div className={s.limitRow}><span>{c.twoWay ? "RateLimitPolicyWithReset" : "RateLimitPolicy"}</span><strong>{c.maxOps} ops{windowHours ? ` per ${windowHours} h, resetting` : " total"}</strong></div>
+            <div className={s.limitRow}><span>TimestampPolicy</span><strong>valid until {new Date(sess.validUntil).toLocaleString()}</strong></div>
+            <div className={s.limitRow}><span>GasPolicy</span><strong>paymaster-enforced gas allowance</strong></div>
+            <div className={s.limitRow}><span>Router allowance (bounded)</span><strong>{weth(c.allowanceWei)} WETH · never type(uint256).max</strong></div>
+          </div>
+          <p className={s.fine}>Anything outside this spec — another contract, selector, recipient or a bigger amount — fails the account&apos;s validation, so the bundler never includes it.</p>
+        </details>
       )}
       <p className={s.fine}>Permission <span className="hash">{sess?.permissionId ?? "—"}</span>{dash.policyVersion ? ` · policy v${dash.policyVersion}` : ""}</p>
     </section>

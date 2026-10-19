@@ -24,6 +24,9 @@ export async function reconcile(ctx: EngineContext) {
     await recordReceipt(ctx, row.id, receipt);
     if (row.purpose === "AUTHORIZE" && row.sessionId) {
       // Multi-asset: one authorization installs every per-asset session prepared with it (older pending ones were abandoned).
+      // A replacement authorization uninstalled the previous permissions in the same batch.
+      if (receipt.success) await ctx.db.update(agentSessions).set({ status: "REVOKED", revokedAt: new Date(), revokeUserOpHash: receipt.userOpHash })
+        .where(and(eq(agentSessions.accountId, row.accountId), inArray(agentSessions.status, ["ACTIVE", "REAUTH_REQUIRED"])));
       await ctx.db.update(agentSessions).set({ status: receipt.success ? "ACTIVE" : "FAILED", authorizeUserOpHash: receipt.userOpHash })
         .where(and(eq(agentSessions.accountId, row.accountId), eq(agentSessions.status, "PENDING_AUTHORIZATION")));
       await audit(receipt.success ? "AGENT_AUTHORIZED" : "AUTHORIZATION_FAILED", receipt.success ? "SUCCESS" : "FAILURE",

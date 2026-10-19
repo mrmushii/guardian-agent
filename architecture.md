@@ -1,6 +1,8 @@
 # Guardian Agent — System Architecture
 
-**Status:** Proposed architecture; no services, contracts, or application code have been deployed or implemented.
+**Status:** Implemented and verified on Base Sepolia (v2: two-way WETH ↔ USDC and multi-asset USDC-hub). Mainnet is disabled in code until the owner approves. Live demo: <https://guardian-agent-murex.vercel.app/> (Judge Sandbox, no wallet needed).
+
+> **Reading note.** Sections 3–15 are the original design and remain the rationale. Where they differ from what was built, the implemented choices in §1–§2 and the "v2 as built" notes win. Evidence: [docs/execution-evidence.md](docs/execution-evidence.md), [docs/security-assessment.md](docs/security-assessment.md), [docs/technical-documentation.md](docs/technical-documentation.md).
 
 **Inputs:** The supplied “Recommended stack” document, including its AI-agent and hosting discussion, and [plan.md](./plan.md).
 
@@ -15,46 +17,43 @@ Version families and provider choices below reflect the supplied recommendations
 3. Keep master authority in the owner's wallet and delegate only restricted session authority to the worker.
 4. Use an event-driven, tool-using LLM to propose intent. Deterministic modules calculate, validate, construct, and authorize transactions.
 5. Use Chainlink reference prices for financial valuation and Uniswap quotes for expected execution output.
-6. Use PostgreSQL as the durable source of application state and Supabase Broadcast for dashboard notifications.
+6. Use PostgreSQL as the durable source of application state. The dashboard receives committed activity over Server-Sent Events (`/api/stream`), which tails the audit table — no separate realtime service.
 7. Prefer direct SwapRouter02 execution only after Gate 0 proves the required field restrictions; otherwise use the minimal executor fallback.
 8. Keep the LLM behind a provider adapter and stop new autonomous financial actions when no validated decision is available.
 
-The MVP supports one strategy: selling overweight WETH into USDC. Additional strategy choices mentioned in the supplied discussion are future possibilities, not authorization to expand this scope.
+**v2 as built.** The original MVP scope was one strategy (sell overweight WETH into USDC). The implementation now supports:
+
+- **Two-way WETH ↔ USDC rebalancing:** `exactInputSingle` (sell WETH, `amountIn` ≤ compiled cap) and `exactOutputSingle` (buy WETH, `amountInMaximum` ≤ compiled USDC cap).
+- **Multi-asset USDC-hub portfolios:** each tradable asset trades only against USDC, through its own isolated session key. An asset is tradable only after four on-chain checks: the token contract, a Chainlink feed, a USDC pool, and a $1 QuoterV2 test swap. Assets without a pool are tracked in simulated paper mode.
+- **Partial-Step Autonomy (E7):** a move larger than the per-trade cap, up to 3× the cap, is executed at Tier 1 as one capped step (`PARTIAL_STEP`), then re-evaluated after the cooldown.
+- **3-Strike Rule-Based Fallback (E8):** if no model returns a valid decision, the owner's own target is used as a deterministic rule for small, low-risk trades; the 3rd consecutive AI failure pauses autonomy (`AI_UNAVAILABLE_OR_INVALID`).
 
 ## 2. Selected stack and its responsibilities
 
-| Layer | Proposed choice | Responsibility |
+| Layer | Implemented choice | Responsibility |
 | --- | --- | --- |
-| Language | TypeScript | Shared types, policy logic, agent runtime, chain integration |
-| Monorepo | pnpm workspaces | Shared packages and coordinated dependencies |
-| Frontend | Next.js 16.x, React | Dashboard, policy configuration, owner interactions |
-| UI | Tailwind CSS, shadcn/ui | Dashboard components and styling |
-| Wallet connection | wagmi, RainbowKit | Connect the owner wallet and request owner signatures |
+| Language / monorepo | TypeScript, pnpm workspaces | Shared types, policy logic, agent runtime, chain integration |
+| Frontend | Next.js 16 App Router, React 19 | Console: overview, portfolio, agent chat, activity, limits, settings |
+| UI | Custom glassmorphic CSS modules (`console.module.css` etc.) | Light/dark themes, command palette, no UI framework |
+| Wallet connection | Raw EIP-1193 via viem (`components/wallet.ts`), SIWE sign-in | Owner sign-in and exact `userOpHash` signatures; testnet Judge Sandbox login (read-only for owner actions) |
 | EVM client | viem | Reads, ABI encoding, event decoding, simulations, receipts, signatures |
-| Worker runtime | Node.js 24 LTS candidate | Persistent event-driven agent process |
-| Account | ZeroDev Kernel v3 | ERC-4337 smart account with separate authority paths |
-| EntryPoint | v0.7 candidate | UserOperation validation and execution |
-| Delegation | `@zerodev/permissions` | Session signer plus call, timestamp, rate-limit, and gas policies |
-| Bundler | Pimlico Alto-compatible bundling | UserOperation submission and status |
-| Paymaster | Pimlico Verifying Paymaster | Approved sponsorship subject to verified configuration |
-| Networks | Base Sepolia / Base Mainnet | Test/security evidence and small real-value proof |
-| DEX | Uniswap V3 SwapRouter02 | Narrow WETH → USDC swap action |
-| Execution quote | Uniswap QuoterV2 | Expected raw output for the configured swap |
-| Reference oracle | Chainlink ETH/USD and USDC/USD feeds | Portfolio valuation and independent price comparison |
-| Database | Supabase PostgreSQL | Policies, sessions, actions, receipts, and audit history |
-| ORM | Drizzle | Typed persistence and migrations |
-| Live UI | Supabase Realtime Broadcast | Notify authenticated clients of committed activity |
-| Validation | Zod | Strict policy, tool-input, and model-output schemas |
-| LLM | Hosted provider behind an adapter | Tool selection, bounded intent decisions, explanations |
-| Solidity tooling | Foundry: Forge, Anvil, Cast | Contract tests, forks, and adversarial EntryPoint harness |
-| TypeScript tests | Vitest | Finance, policy, risk, schema, and lifecycle tests |
-| Browser tests | Playwright | Dashboard, owner approvals, and demonstration workflows |
-| Logs | Pino | Structured operational logs with correlation identifiers |
-| Error monitoring | Sentry | Redacted frontend and worker errors |
-| Web hosting | Vercel | Next.js application and short-lived request handlers |
-| Worker hosting | Railway | Persistent worker process |
-| Database hosting | Supabase | Managed PostgreSQL and realtime infrastructure |
-| RPC / WebSocket | Alchemy or QuickNode | Dedicated chain reads, subscriptions, and submission support |
+| Worker runtime | Node.js | Persistent watcher: polling + WebSocket transfers, reconciliation |
+| Account | ZeroDev Kernel v3.3 | ERC-4337 smart account with separate master and session authority |
+| EntryPoint | v0.7 (`0x0000000071727De22E5E9d8BAf0edAc6f37da032`) | UserOperation validation and execution |
+| Delegation | `@zerodev/permissions`: `CallPolicy` 0.0.5, `TimestampPolicy`, `RateLimitPolicyWithReset`, `GasPolicy` | One session key per tradable asset; caps, recipient lock, op window, expiry, paymaster-only gas |
+| Bundler / paymaster | Pimlico | UserOperation submission and sponsorship |
+| Networks | Base Sepolia (verified); Base mainnet gated by `GUARDIAN_ALLOW_MAINNET` | Test/security evidence |
+| DEX | Uniswap V3 SwapRouter02 | `exactInputSingle` (sell) and `exactOutputSingle` (buy) only |
+| Execution quote | Uniswap QuoterV2 | Expected output and quote-derived minimums |
+| Reference oracle | Chainlink ETH/USD and USDC/USD (+ per-asset feeds) | Valuation, divergence checks |
+| Rebalancing engine | Closed-form integer math (`packages/portfolio`) | Two-way and multi-asset hub legs, no floating point in amounts |
+| Database / ORM | PostgreSQL, Drizzle | Policies, sessions, actions, receipts, audit history, durable claims |
+| Live UI | Server-Sent Events (`/api/stream`) | Push audit events and worker watch status to the console |
+| Counterfactual preview | `/api/whatif` | Replays the last 7 days under proposed limits before saving |
+| Validation | Zod | Strict policy and model-output schemas (unknown fields rejected) |
+| LLM | Groq `openai/gpt-oss-120b` primary → configurable fallback (Gemini or OpenAI) → deterministic rule fallback | Bounded decisions and explanations |
+| Tests | Vitest, Playwright | Finance, policy, risk, schema, lifecycle, dashboard |
+| Hosting | Vercel (web), persistent process for the worker | |
 
 Select patched, mutually compatible releases and pin them after Gate 0. Using Pimlico services does not imply self-hosting Alto; choose the actual service endpoint and sponsorship configuration during integration. Preserve a bundler adapter so provider-specific behavior does not spread through the application.
 
@@ -67,7 +66,7 @@ flowchart TB
     Owner[Owner browser and master wallet]
     Web[Next.js web app on Vercel]
     Worker[Persistent Node.js worker on Railway]
-    DB[(Supabase PostgreSQL)]
+    DB[(PostgreSQL)]
     RT[Authenticated Realtime Broadcast]
     LLM[Hosted LLM provider]
     RPC[Base RPC and WebSocket]

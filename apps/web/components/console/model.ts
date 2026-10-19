@@ -11,6 +11,8 @@ export type Action = {
 };
 export type Dash = {
   network: { chainId: number; name: string; isTestnet: boolean };
+  /** Testnet Judge Sandbox session: owner-only actions are refused by the server. */
+  sandbox?: boolean;
   identities: { masterOwner: string; smartAccount: string; entryPoint: string; kernelVersion: string; sessionSigner: string | null };
   monitoring: { enabled: boolean; pausedReason: string | null };
   policy: Policy | null;

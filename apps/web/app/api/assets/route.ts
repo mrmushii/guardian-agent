@@ -1,7 +1,7 @@
 import type { Address } from "viem";
 import { portfolioTargets } from "@guardian/policy";
 import { addCustomAsset, holdings, loadAccountState, paperBook, removeCustomAsset } from "@guardian/engine";
-import { HttpError, json, requireAccount, route } from "@/lib/server";
+import { HttpError, json, requireAccount, requireOwner, route } from "@/lib/server";
 
 export const dynamic = "force-dynamic";
 
@@ -27,7 +27,7 @@ export const GET = route(async (req: Request) => {
 
 /** Add a token by address (verified on-chain before it is saved), or remove a custom token. */
 export const POST = route(async (req: Request) => {
-  const { account, ctx } = await requireAccount();
+  const { account, ctx } = await requireOwner();
   const body = (await req.json().catch(() => ({}))) as { token?: string; feed?: string; kind?: "stable" | "volatile"; remove?: string };
   if (body.remove) { await removeCustomAsset(ctx, account.id, body.remove); return json({ removed: body.remove }); }
   if (!body.token) throw new HttpError(400, "Enter the token address");

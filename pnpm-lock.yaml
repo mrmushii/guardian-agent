@@ -86,6 +86,9 @@ importers:
 
   apps/web:
     dependencies:
+      '@guardian/agent':
+        specifier: workspace:*
+        version: link:../../packages/agent
       '@guardian/chain':
         specifier: workspace:*
         version: link:../../packages/chain

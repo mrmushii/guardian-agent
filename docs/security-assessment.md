@@ -4,13 +4,14 @@
 
 **Limitation, stated up front:** the on-chain permission bounds asset access, the token-unit transaction size, the call target, the selector, the recipient, the session duration, the operation count and the gas authority. All of these are verified by tests and testnet transactions. Live USD valuation, the daily USD budget, risk scoring and market quality (slippage, `amountOutMinimum`) are enforced **off-chain** in this MVP.
 
-## Authority tiers
+## Permission-Tier Implementation Matrix
 
-| Tier | Signer | When | On-chain bound |
-| --- | --- | --- | --- |
-| 1 — Agent | Restricted session key | Every check passes and risk is LOW | Permission policies (below) |
-| 2 — Master | Owner wallet (Kernel root) | Valid, but beyond agent authority or needing review | Full account authority, used only after revalidation and the owner's signature |
-| 3 — Prohibited | None | Violations, hard gates, HIGH risk | Rejected and audited; never escalated to master automatically |
+| Tier | Signer | When | How it is enforced | Evidence |
+| --- | --- | --- | --- | --- |
+| 1 — Scoped agent session key | Restricted session key (one per tradable asset) | Every check passes, risk is LOW, size ≤ cap (or a capped `PARTIAL_STEP` for moves up to 3× the cap) | On-chain: CallPolicy (2 selectors, recipient = self, token caps), RateLimitPolicyWithReset, TimestampPolicy, GasPolicy | Tier 1 swap, block 48112653; `gate0-two-way-permissions.json` |
+| 2 — Master co-sign | Owner wallet (Kernel root) | Valid, but beyond agent authority, or the agent ESCALATEs | Server revalidates with **fresh balances, Chainlink prices and a new QuoterV2 quote** before preparing; the owner signs the exact `userOpHash` | Master-signed sale, block 48113495 |
+| 3 — Deterministic hard gate | None | Policy violation, hard risk gate, HIGH risk, stale oracle, sequencer down | Rejected and audited; never escalated to master automatically | Risk unit tests; audit events |
+| Paper mode | None (simulation only) | Asset has a fresh price feed but no verified USDC pool / quote | Tracked and valued; trades are simulated, never sent | `assets.ts` four-step verification |
 
 ## What the session key can do (permission v2)
 
@@ -49,18 +50,22 @@ If no provider returns a valid decision, a rule-based rebalance to the owner's t
 
 All hashes are listed in [execution-evidence.md](execution-evidence.md).
 
-## Known risks and gaps
+## Known-Risk & Mitigation Registry
 
-1. **Sell-side `amountOutMinimum` is unconstrained on-chain.** A compromised backend could execute up to 6 capped sells a day at a bad price. (Buys are bounded by `amountInMaximum` on-chain.) Mitigations: short sessions, a small cap, revocation. A future fix is an oracle-aware execution guard.
-2. **USD cap drift.** The token cap is worth more dollars if ETH rises. Reauthorization at +10% (below the 15% buffer) limits this, but between checks it relies on the worker being live.
-3. **Testnet pricing.** Base Sepolia pools quote about 2× Chainlink. The testnet divergence threshold (200%) is deliberately relaxed and labeled `TESTNET_PRICING`. Mainnet uses 2%.
-4. **Forced on-chain validation failure (E4) not yet produced.** It needs Sepolia ETH for the harness EOA. Bundler-level and simulated on-chain rejections are proven.
-5. **Mainnet proof not yet run.** Held until the owner approves real-value testing.
-6. **Single LLM provider configured.** The OpenAI fallback is implemented, but no OpenAI key is set. A provider outage falls back to the rule-based Tier 1 rebalance; three in a row pause autonomy. Neither path can widen authority.
-9. **Longer exposure window.** A 7-day session with 6 ops/day is more exposure than v1's 2 ops in 24 h. This is the price of unattended operation. The bound is still fixed on-chain and revocable at any time.
-10. **Window count shown from the database.** The dashboard's "swaps left this window" comes from recorded operations. The chain enforces the real count, so a mismatch can only cause a bundler rejection (fail closed), never an extra operation.
-7. **Key custody.** The session key is decrypted in the worker process. A KMS/HSM signer is future hardening. The master key never reaches the server.
-8. **Audit-log integrity.** Database records are not tamper-proof. Chain evidence (UserOperation and transaction hashes) is the authority.
+| # | Risk | Mitigation in place | Residual / future fix |
+| --- | --- | --- | --- |
+| 1 | **Sell-side `amountOutMinimum` unconstrained on-chain.** A compromised backend could execute up to 6 capped sells a day at a bad price. | Off-chain quote-derived minimum; small cap; short session; one-click revocation. Buys are bounded on-chain by `amountInMaximum`. | Oracle-aware execution guard contract. |
+| 2 | **Token-unit vs. USD drift.** The WETH cap is worth more dollars if ETH rises. | 15% buffer at compile time; re-authorization triggers at a +10% price rise (below the buffer). | Between checks it relies on the worker being live. |
+| 3 | **Testnet pool divergence.** Base Sepolia pools quote about 2× Chainlink. | Testnet threshold relaxed to 200% and every action labeled `TESTNET_PRICING`; mainnet uses 2%. | None on mainnet. |
+| 4 | **Unknown submission outcome.** | The account stays locked until the reconciler resolves the operation from chain evidence; no blind retry. | — |
+| 5 | **Forced on-chain validation failure not produced.** | Bundler-level rejections (real key) and `EntryPoint.handleOps` simulations prove the same rules. | Needs Sepolia ETH for the harness EOA. |
+| 6 | **Mainnet proof not run.** | Mainnet refused in code unless `GUARDIAN_ALLOW_MAINNET=true`. | Held until the owner approves real-value testing. |
+| 7 | **LLM outage or invalid output.** | Fallback model, then the deterministic rule (Tier 1, LOW risk only); 3rd consecutive failure pauses autonomy. Neither path can widen authority. | — |
+| 8 | **Key custody.** The session key is decrypted in the worker process. | Encrypted at rest; the master key never reaches the server. | KMS/HSM signer. |
+| 9 | **Audit-log integrity.** Database records are not tamper-proof. | Chain evidence (UserOperation and transaction hashes) is the authority. | — |
+| 10 | **Longer exposure window.** 7-day session, 6 ops per 24 h. | Bound fixed on-chain and revocable at any time. | Shorter sessions for cautious owners. |
+| 11 | **Window count shown from the database.** | The chain enforces the real count; a mismatch can only cause a bundler rejection (fail closed). | — |
+| 12 | **Judge Sandbox (testnet only).** Anyone with the link can drive the demo account. | Disabled off testnet; sandbox sessions are refused for limits, monitoring, authorize/revoke, approvals, signatures and asset changes; simulated moves are capped at $30 and funded by the demo wallet. Cooldown lifting is testnet-only. | — |
 
 ## Claim
 

@@ -1,8 +1,8 @@
 import { publishPolicy } from "@guardian/engine";
-import { HttpError, json, requireAccount, route } from "@/lib/server";
+import { HttpError, json, requireOwner, route } from "@/lib/server";
 /** Owner publishes a new policy version. The agent's on-chain permission changes only after the owner signs a new authorization. */
 export const POST = route(async (req: Request) => {
-  const { account, ctx } = await requireAccount();
+  const { account, ctx } = await requireOwner();
   const patch = (await req.json().catch(() => null)) as Record<string, unknown> | null;
   if (!patch || typeof patch !== "object") throw new HttpError(400, "Send the policy fields to change");
   const allowed = ["ethMinPct", "ethMaxPct", "targetEthPct", "maxAutoTxUsd", "dailyBudgetUsd", "maxSlippageBps", "sessionDurationHours", "assets", "driftPct"];
