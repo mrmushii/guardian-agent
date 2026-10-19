@@ -60,6 +60,8 @@ test("owner signs in and sees live account, authority, and activity", async ({ p
   // Real history from the testnet runs: confirmed rebalances and their evidence links.
   await page.getByRole("tab", { name: "Activity" }).click();
   const activity = page.getByRole("region", { name: "Activity timeline" });
+  // Live history: confirmations can be older than the newest 25 events, so look under the Trades filter.
+  await activity.getByRole("button", { name: "Trades" }).click();
   await expect(activity.getByText(/Confirmed in block/).first()).toBeVisible();
   await expect(activity.getByRole("link", { name: /^Transaction 0x/ }).first()).toHaveAttribute("href", /sepolia\.basescan\.org\/tx\//);
   await page.getByRole("tab", { name: "Transactions" }).click();

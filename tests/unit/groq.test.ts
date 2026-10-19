@@ -1,6 +1,6 @@
 // Groq adapter: strict JSON-schema request, JSON-mode retry, null-field handling.
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { GroqModel, validateDecision, type AgentContext } from "@guardian/agent";
+import { GeminiModel, GroqModel, decideWithFallback, validateDecision, type AgentContext } from "@guardian/agent";
 
 const ctx = { portfolio: {} } as unknown as AgentContext;
 const reply = (content: unknown, status = 200) =>
@@ -34,11 +34,32 @@ describe("GroqModel", () => {
       return f === "json_schema" ? reply(null, 400) : reply({ decision: "NO_ACTION", reason: "In band" });
     });
     expect(await new GroqModel("k", "llama-3.3-70b-versatile").decide(ctx)).toEqual({ decision: "NO_ACTION", reason: "In band" });
-    expect(formats).toEqual(["json_schema", "json_object"]);
+    // json_schema with reasoning → json_schema without the reasoning flag → JSON mode.
+    expect(formats).toEqual(["json_schema", "json_schema", "json_object"]);
   });
 
   it("surfaces HTTP errors with the provider label", async () => {
     vi.stubGlobal("fetch", async () => reply(null, 401));
     await expect(new GroqModel("bad", "openai/gpt-oss-120b").decide(ctx)).rejects.toThrow("Groq HTTP 401");
+  });
+
+  it("returns the model reasoning alongside the validated decision", async () => {
+    vi.stubGlobal("fetch", async (_: string, init: RequestInit) => {
+      expect(JSON.parse(String(init.body)).include_reasoning).toBe(true);
+      return new Response(JSON.stringify({ choices: [{ message: { content: JSON.stringify({ decision: "NO_ACTION", targetWethWeight: null, recheckMinutes: null, reason: "In band" }),
+        reasoning: "Weight is 52%, inside 45-55, so nothing to do." } }] }), { status: 200 });
+    });
+    const r = await decideWithFallback([new GroqModel("k", "openai/gpt-oss-120b")], ctx, { ethMinPct: 45, ethMaxPct: 55, maxWaitMinutes: 60 });
+    expect(r.ok && r.reasoning).toBe("Weight is 52%, inside 45-55, so nothing to do.");
+  });
+});
+
+describe("GeminiModel reasoning", () => {
+  it("separates thought parts from the JSON answer", async () => {
+    vi.stubGlobal("fetch", async () => new Response(JSON.stringify({ candidates: [{ content: { parts: [
+      { text: "Checking the band first.", thought: true }, { text: JSON.stringify({ decision: "NO_ACTION", reason: "In band" }) }] } }] }), { status: 200 }));
+    const r = await new GeminiModel("k", "gemini-x").decideDetailed(ctx);
+    expect(r.value).toEqual({ decision: "NO_ACTION", reason: "In band" });
+    expect(r.reasoning).toBe("Checking the band first.");
   });
 });

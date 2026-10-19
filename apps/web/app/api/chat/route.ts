@@ -27,6 +27,6 @@ export const POST = route(async (req: Request) => {
   catch (e) { throw new HttpError(503, `${(e as Error).message.split(" (")[0]}. Your limits still protect the account; try again shortly.`); }
   // Memory stores answered turns only, so a failed AI call leaves no orphan question.
   await appendAudit(ctx.db, { accountId: account.id, type: "CHAT_Q", level: "INFO", message: question });
-  await appendAudit(ctx.db, { accountId: account.id, type: "CHAT_A", level: "INFO", message: reply.answer, data: { intent: reply.intent, suggestions: reply.suggestions, provider: reply.provider } });
+  await appendAudit(ctx.db, { accountId: account.id, type: "CHAT_A", level: "INFO", message: reply.answer, data: { intent: reply.intent, suggestions: reply.suggestions, provider: reply.provider, reasoning: reply.reasoning } });
   return json(reply);
 });

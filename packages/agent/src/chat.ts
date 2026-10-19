@@ -34,7 +34,7 @@ const ChatReply = z.object({
   intent: z.enum(CHAT_INTENTS).catch("NONE"),
   suggestions: z.array(z.string().max(120)).max(3).catch([]),
 });
-export type ChatReply = z.infer<typeof ChatReply> & { provider: string };
+export type ChatReply = z.infer<typeof ChatReply> & { provider: string; reasoning?: string };
 export type ChatTurn = { role: "owner" | "agent"; text: string };
 
 /** Defense in depth: the model never needs to show an address or key, so strip anything that looks like one. */
@@ -46,8 +46,9 @@ export async function chatWithAgent(models: AgentModel[], input: { question: str
   for (const m of models) {
     if (!m.ask) continue;
     try {
-      const r = ChatReply.parse(await m.ask(CHAT_SYSTEM, user, CHAT_SCHEMA));
-      return { ...r, answer: scrubAnswer(r.answer), suggestions: r.suggestions.map(scrubAnswer), provider: m.name };
+      const d = m.askDetailed ? await m.askDetailed(CHAT_SYSTEM, user, CHAT_SCHEMA) : { value: await m.ask(CHAT_SYSTEM, user, CHAT_SCHEMA), reasoning: undefined };
+      const r = ChatReply.parse(d.value);
+      return { ...r, answer: scrubAnswer(r.answer), suggestions: r.suggestions.map(scrubAnswer), provider: m.name, reasoning: d.reasoning ? scrubAnswer(d.reasoning).slice(0, 6000) : undefined };
     } catch (e) { errors.push(`${m.name}: ${(e as Error).message.slice(0, 200)}`); }
   }
   throw new Error(errors.length ? `AI unavailable (${errors.join(" | ")})` : "No AI model configured");

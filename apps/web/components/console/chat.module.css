@@ -39,3 +39,6 @@
 .composer input { flex: 1; border-radius: 999px; padding: 0.7rem 1.1rem; }
 .composer button { width: 46px; padding: 0; display: grid; place-items: center; }
 .fine { margin: 0; padding: 0 18px 12px; font-size: 0.72rem; color: var(--ink-3); }
+.why { font-size: 0.8rem; }
+.why summary { cursor: pointer; color: var(--accent); font-weight: 650; }
+.why pre { margin: 6px 0 0; max-height: 220px; overflow: auto; white-space: pre-wrap; font-family: var(--font-mono), monospace; font-size: 0.74rem; color: var(--ink-2); background: var(--glass); border-radius: 8px; padding: 8px 10px; }

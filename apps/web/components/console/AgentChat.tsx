@@ -8,7 +8,7 @@ import type { View } from "./Shell";
 
 export type Msg = {
   id: string; role: "owner" | "agent"; text: string; at: string;
-  intent?: string; suggestions?: string[]; provider?: string; proactive?: boolean; link?: string; animate?: boolean; error?: boolean;
+  intent?: string; suggestions?: string[]; provider?: string; reasoning?: string; proactive?: boolean; link?: string; animate?: boolean; error?: boolean;
 };
 
 const STARTERS = ["How is my portfolio doing?", "Why did you trade last time?", "What would make you ask me for approval?", "Explain my limits simply"];
@@ -53,8 +53,8 @@ export function AgentChat({ ctl, proactive, setView, onSeen, initialAsk, onIniti
   const mode = agentMode(dash), p = portfolioOf(dash);
 
   useEffect(() => {
-    api<{ turns: { role: "owner" | "agent"; text: string; at: string; data: { intent?: string; suggestions?: string[]; provider?: string } | null }[] }>("/api/chat")
-      .then(({ turns }) => setMsgs(turns.map((t, i) => ({ id: `h-${i}`, role: t.role, text: t.text, at: t.at, intent: t.data?.intent, provider: t.data?.provider }))))
+    api<{ turns: { role: "owner" | "agent"; text: string; at: string; data: { intent?: string; suggestions?: string[]; provider?: string; reasoning?: string } | null }[] }>("/api/chat")
+      .then(({ turns }) => setMsgs(turns.map((t, i) => ({ id: `h-${i}`, role: t.role, text: t.text, at: t.at, intent: t.data?.intent, provider: t.data?.provider, reasoning: t.data?.reasoning }))))
       .catch(() => { /* history is a convenience */ });
   }, []);
   useEffect(() => { onSeen(); }, [proactive.length]); // eslint-disable-line react-hooks/exhaustive-deps
@@ -67,8 +67,8 @@ export function AgentChat({ ctl, proactive, setView, onSeen, initialAsk, onIniti
     setMsgs((m) => [...m, { id: `o-${now}`, role: "owner", text: q.trim(), at: now }]);
     setText(""); setThinking(true);
     try {
-      const r = await api<{ answer: string; intent: string; suggestions: string[]; provider: string }>("/api/chat", { message: q.trim() });
-      setMsgs((m) => [...m, { id: `a-${Date.now()}`, role: "agent", text: r.answer, at: new Date().toISOString(), intent: r.intent, suggestions: r.suggestions, provider: r.provider, animate: true }]);
+      const r = await api<{ answer: string; intent: string; suggestions: string[]; provider: string; reasoning?: string }>("/api/chat", { message: q.trim() });
+      setMsgs((m) => [...m, { id: `a-${Date.now()}`, role: "agent", text: r.answer, at: new Date().toISOString(), intent: r.intent, suggestions: r.suggestions, provider: r.provider, reasoning: r.reasoning, animate: true }]);
     } catch (e) {
       setMsgs((m) => [...m, { id: `e-${Date.now()}`, role: "agent", text: (e as Error).message, at: new Date().toISOString(), error: true }]);
     } finally { setThinking(false); }
@@ -115,6 +115,7 @@ export function AgentChat({ ctl, proactive, setView, onSeen, initialAsk, onIniti
               {m.intent && INTENT_BUTTON[m.intent] && (
                 <button className={s.intent} disabled={!!busy} onClick={() => doIntent(m.intent!)}><Icon name={INTENT_BUTTON[m.intent].icon} size={14} />{INTENT_BUTTON[m.intent].label}</button>
               )}
+              {m.reasoning && <details className={s.why}><summary>How I got this answer</summary><pre>{m.reasoning}</pre></details>}
               <span className={s.meta}>{time(m.at)}{m.provider ? ` · ${m.provider === "deterministic-fallback" ? "safe rule" : m.provider.split(":")[0]}` : ""}</span>
             </div>
           </div>

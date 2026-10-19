@@ -2,7 +2,7 @@
 import { useState } from "react";
 import s from "./console.module.css";
 import { explain, short, time, type Dash, type Ev } from "./model";
-import { Evidence } from "./Thinking";
+import { AiThoughts, Evidence } from "./Thinking";
 
 type Tab = "activity" | "transactions" | "account";
 const FILTERS = { all: () => true, trades: (e: Ev) => ["CONFIRMED", "SUBMITTED", "AI_DECISION", "PLAN", "DEMO_MOVE"].includes(e.type), problems: (e: Ev) => e.level === "WARNING" || e.level === "FAILURE" };
@@ -42,6 +42,7 @@ export function History({ dash, events }: { dash: Dash; events: Ev[] }) {
                     <div>
                       <div className={s.feedTitle}>{x.title}<time dateTime={e.createdAt}>{new Date(e.createdAt).toLocaleDateString([], { month: "short", day: "numeric" })} {time(e.createdAt)}</time></div>
                       <p className={s.feedMsg}>{e.message}</p>
+                      {e.type === "AI_DECISION" && <AiThoughts data={e.data} />}
                       <Evidence e={e} />
                     </div>
                   </li>

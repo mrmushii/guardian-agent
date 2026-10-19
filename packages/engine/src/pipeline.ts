@@ -2,7 +2,7 @@ import { and, desc, eq, ne } from "drizzle-orm";
 import { encodeFunctionData, formatGwei, type Address, type Hex } from "viem";
 import { agentActions, agentSessions, appendAudit, claimAction, dailyUsedCents, inCooldown, releaseBudget, reserveBudget,
   securityEvents, smartAccounts, transitionAction, userOperations, type AuditLevel } from "@guardian/db";
-import { DETERMINISTIC_FALLBACK, decideWithFallback, deterministicDecision, type AgentContext, type AgentDecision } from "@guardian/agent";
+import { DETERMINISTIC_FALLBACK, decideWithFallback, deterministicDecision, scrubAnswer, type AgentContext, type AgentDecision } from "@guardian/agent";
 import { maxInFromQuote, minOutFromQuote, quoteUsdcToWeth, quoteWethToUsdc, type SwapQuote } from "@guardian/dex";
 import { recentMove } from "@guardian/oracle";
 import { assessRebalance, type TradeDirection } from "@guardian/portfolio";
@@ -214,7 +214,28 @@ export async function runRebalance(ctx: EngineContext, accountId: string, trigge
         { legs: mp.assessment.legs.map((l) => ({ ...l, usdCents: `${l.usdCents}` })) });
       const asset = mp.rows.find((r) => r.symbol === leg.symbol)!;
       if (asset.status !== "VERIFIED") {
-        // Simulated leg: oracle-priced fill in the paper ledger, capped like an autonomous trade, no budget, no chain.
+        // Simulated leg: the AI still decides (same reasoning capture as real trades); the fill is oracle-priced in the
+        // paper ledger, capped like an autonomous trade, with no budget and no chain.
+        const legUsd = (Number(leg.usdCents < usdToCents(policy.maxAutoTxUsd) ? leg.usdCents : usdToCents(policy.maxAutoTxUsd)) / 100).toFixed(2);
+        const paperCtx: AgentContext = {
+          trigger: { kind: trigger.kind, detail: trigger.detail },
+          portfolio: { wethUsd: "n/a", usdcUsd: "n/a", totalUsd: multiPortfolioUsd!, wethWeightPct: `${leg.symbol} ${leg.fromPct.toFixed(1)}% vs target ${leg.targetPct}%` },
+          policy: { ethMinPct: policy.ethMinPct, ethMaxPct: policy.ethMaxPct, targetEthPct: policy.targetEthPct, maxAutoTxUsd: policy.maxAutoTxUsd, dailyBudgetUsd: policy.dailyBudgetUsd },
+          proposedTrade: { direction: leg.side === "SELL" ? "SELL_WETH" : "BUY_WETH", usd: legUsd, tier: "SIMULATED", reasons: [`${leg.symbol} has no usable pool on this network: simulated at the Chainlink price`],
+            risk: { score: 0, classification: "LOW", hardGates: [] } },
+          recentOutcomes: await recentOutcomes(ctx, accountId, action.id),
+          ...(trigger.userMessage ? { userMessage: trigger.userMessage } : {}),
+        };
+        const pai = ctx.models.length ? await decideWithFallback(ctx.models, paperCtx, { ethMinPct: 0, ethMaxPct: 100, maxWaitMinutes: GUARDIAN_CONFIG.maxWaitMinutes })
+          : { ok: false as const, errors: ["No LLM provider configured"] };
+        const pDecision: AgentDecision = pai.ok ? pai.decision : deterministicDecision(policy.targetEthPct);
+        const pProvider = pai.ok ? pai.provider : DETERMINISTIC_FALLBACK;
+        await transitionAction(ctx.db, action.id, ["PLANNING"], "PLANNING", { decision: { ...pDecision, provider: pProvider } });
+        await audit("AI_DECISION", "INFO", `AI decision: ${pDecision.decision} (simulated ${leg.side === "SELL" ? "sale" : "purchase"} of ${leg.symbol}) — ${pDecision.reason}`, {
+          provider: pProvider, decision: pDecision, fallbackErrors: pai.errors, inputs: paperCtx,
+          reasoning: pai.ok && pai.reasoning ? scrubAnswer(pai.reasoning).slice(0, 6000) : undefined, latencyMs: pai.ok ? pai.latencyMs : undefined });
+        if (pDecision.decision === "WAIT") return finish(["PLANNING"], "WAIT", "INFO", `Agent chose to wait ${pDecision.recheckMinutes} min`, { cooldownUntil: new Date(Date.now() + pDecision.recheckMinutes * 60_000) });
+        if (pDecision.decision !== "REBALANCE") return finish(["PLANNING"], "NO_ACTION", "INFO", `Agent chose ${pDecision.decision} — simulated step skipped`);
         const r = await paperFill(ctx, accountId, mp.rows, leg, usdToCents(policy.maxAutoTxUsd));
         if (!r.filledCents) return finish(["PLANNING"], "NO_ACTION", "INFO", `Simulated ${leg.side.toLowerCase()} of ${leg.symbol} skipped: ${r.reason}`);
         const usd = (Number(r.filledCents) / 100).toFixed(2), qty = (Number(r.qtyRaw) / 10 ** asset.decimals).toPrecision(6);
@@ -292,7 +313,10 @@ export async function runRebalance(ctx: EngineContext, accountId: string, trigge
     }
     await transitionAction(ctx.db, action.id, ["PLANNING"], "PLANNING", { decision: { ...decision, provider } });
     await audit("AI_DECISION", "INFO", `AI decision: ${decision.decision}${decision.decision === "REBALANCE" ? ` to ${targetPct}% WETH` : ""} — ${decision.reason}`,
-      { provider, decision, fallbackErrors: ai.errors });
+      { provider, decision, fallbackErrors: ai.errors,
+        // Display only: the model's own reasoning (when exposed) and exactly what it was shown.
+        reasoning: ai.ok && ai.reasoning ? scrubAnswer(ai.reasoning).slice(0, 6000) : undefined,
+        latencyMs: ai.ok ? ai.latencyMs : undefined, inputs: agentCtx });
     if (decision.decision === "WAIT") {
       return finish(["PLANNING"], "WAIT", "INFO", `Agent chose to wait ${decision.recheckMinutes} min`,
         { cooldownUntil: new Date(Date.now() + decision.recheckMinutes * 60_000) });

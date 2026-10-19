@@ -67,6 +67,9 @@ export interface AgentModel {
   decide(context: AgentContext): Promise<unknown>;
   /** General structured call (owner chat, summaries): returns parsed JSON matching `schema`; callers validate. */
   ask?(system: string, user: string, schema: JsonSchema): Promise<Record<string, unknown>>;
+  /** Same as decide/ask, plus the model's reasoning when the provider exposes it. */
+  decideDetailed?(context: AgentContext): Promise<Detailed<unknown>>;
+  askDetailed?(system: string, user: string, schema: JsonSchema): Promise<Detailed<Record<string, unknown>>>;
 }
 
 /** Minimal JSON-schema shape used for structured output. Strict mode: every property listed in `required`. */
@@ -114,26 +117,49 @@ async function fetchWithRetry(url: string, init: RequestInit & { timeoutMs: numb
   return last!;
 }
 
+/** A model answer plus the model's own reasoning when the provider exposes it (display only, never parsed for decisions). */
+export interface Detailed<T> { value: T; reasoning?: string; latencyMs: number }
+
+/** Strips <think>…</think> blocks some models put in the content, returning [content, thoughts]. */
+function splitThink(content: string): [string, string | undefined] {
+  const m = content.match(/<think>([\s\S]*?)<\/think>/i);
+  return m ? [content.replace(m[0], "").trim(), m[1]!.trim()] : [content, undefined];
+}
+
 export class GeminiModel implements AgentModel {
   readonly name: string;
   constructor(private apiKey: string, private model: string, private timeoutMs = 20_000) { this.name = `gemini:${model}`; }
-  async ask(system: string, user: string, schema: unknown, temperature = 0.3): Promise<Record<string, unknown>> {
-    const res = await fetchWithRetry(`https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(this.model)}:generateContent`, {
+  private request(system: string, user: string, schema: unknown, temperature: number, thoughts: boolean) {
+    return fetchWithRetry(`https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(this.model)}:generateContent`, {
       method: "POST", timeoutMs: this.timeoutMs,
       headers: { "content-type": "application/json", "x-goog-api-key": this.apiKey },
       body: JSON.stringify({
         systemInstruction: { parts: [{ text: system }] },
         contents: [{ role: "user", parts: [{ text: user }] }],
-        generationConfig: { temperature, responseMimeType: "application/json", responseJsonSchema: schema },
+        generationConfig: { temperature, responseMimeType: "application/json", responseJsonSchema: schema, ...(thoughts ? { thinkingConfig: { includeThoughts: true } } : {}) },
       }),
     });
+  }
+  async askDetailed(system: string, user: string, schema: unknown, temperature = 0.3): Promise<Detailed<Record<string, unknown>>> {
+    const t0 = Date.now();
+    let res = await this.request(system, user, schema, temperature, true);
+    if (res.status === 400) res = await this.request(system, user, schema, temperature, false); // model without thinking support
     if (!res.ok) throw new Error(`Gemini HTTP ${res.status}`);
-    const body = (await res.json()) as { candidates?: { content?: { parts?: { text?: string }[] } }[] };
-    const text = body.candidates?.[0]?.content?.parts?.map((p) => p.text ?? "").join("") ?? "";
-    return JSON.parse(text) as Record<string, unknown>;
+    const body = (await res.json()) as { candidates?: { content?: { parts?: { text?: string; thought?: boolean }[] } }[] };
+    const parts = body.candidates?.[0]?.content?.parts ?? [];
+    const text = parts.filter((p) => !p.thought).map((p) => p.text ?? "").join("");
+    const thoughts = parts.filter((p) => p.thought).map((p) => p.text ?? "").join("\n").trim();
+    return { value: JSON.parse(text) as Record<string, unknown>, reasoning: thoughts || undefined, latencyMs: Date.now() - t0 };
+  }
+  async ask(system: string, user: string, schema: unknown, temperature = 0.3): Promise<Record<string, unknown>> {
+    return (await this.askDetailed(system, user, schema, temperature)).value;
+  }
+  async decideDetailed(context: AgentContext): Promise<Detailed<unknown>> {
+    const r = await this.askDetailed(SYSTEM, JSON.stringify(context), RESPONSE_SCHEMA, 0);
+    return { ...r, value: normalize(r.value) };
   }
   async decide(context: AgentContext): Promise<unknown> {
-    return normalize(await this.ask(SYSTEM, JSON.stringify(context), RESPONSE_SCHEMA, 0));
+    return (await this.decideDetailed(context)).value;
   }
 }
 
@@ -153,31 +179,51 @@ const STRICT_SCHEMA = {
 export class OpenAICompatibleModel implements AgentModel {
   readonly name: string;
   constructor(private label: string, private url: string, private apiKey: string, private model: string,
-    private opts: { strictSchema?: boolean; timeoutMs?: number } = {}) { this.name = `${label.toLowerCase()}:${model}`; }
+    private opts: { strictSchema?: boolean; reasoning?: boolean; timeoutMs?: number } = {}) { this.name = `${label.toLowerCase()}:${model}`; }
 
-  private request(system: string, user: string, responseFormat: unknown, temperature: number) {
+  private request(system: string, user: string, responseFormat: unknown, temperature: number, reasoning: boolean) {
     return fetchWithRetry(this.url, {
       method: "POST", timeoutMs: this.opts.timeoutMs ?? 20_000,
       headers: { "content-type": "application/json", authorization: `Bearer ${this.apiKey}` },
-      body: JSON.stringify({ model: this.model, temperature, response_format: responseFormat, messages: [{ role: "system", content: system }, { role: "user", content: user }] }),
+      body: JSON.stringify({ model: this.model, temperature, response_format: responseFormat, ...(reasoning ? { include_reasoning: true } : {}),
+        messages: [{ role: "system", content: system }, { role: "user", content: user }] }),
     });
   }
 
-  async ask(system: string, user: string, schema: JsonSchema, temperature = 0.3): Promise<Record<string, unknown>> {
-    let res = this.opts.strictSchema
-      ? await this.request(system, user, { type: "json_schema", json_schema: { name: "response", strict: true, schema } }, temperature)
-      : await this.request(system, user, { type: "json_object" }, temperature);
-    // Models without structured-output support reject json_schema with 400; JSON mode output is still validated by the caller.
-    if (this.opts.strictSchema && res.status === 400) res = await this.request(system, user, { type: "json_object" }, temperature);
-    if (!res.ok) throw new Error(`${this.label} HTTP ${res.status}`);
-    const body = (await res.json()) as { choices?: { message?: { content?: string } }[] };
-    const raw = JSON.parse(body.choices?.[0]?.message?.content ?? "") as Record<string, unknown>;
+  async askDetailed(system: string, user: string, schema: JsonSchema, temperature = 0.3): Promise<Detailed<Record<string, unknown>>> {
+    const t0 = Date.now();
+    const strict = { type: "json_schema", json_schema: { name: "response", strict: true, schema } }, loose = { type: "json_object" };
+    // Most capable first; a 400 means the model rejects that option (reasoning flag or structured output), so step down.
+    const attempts: [unknown, boolean][] = [
+      ...(this.opts.strictSchema ? [[strict, !!this.opts.reasoning] as [unknown, boolean], ...(this.opts.reasoning ? [[strict, false] as [unknown, boolean]] : [])] : []),
+      [loose, false],
+    ];
+    let res: Response | undefined;
+    for (const [format, reasoning] of attempts) {
+      res = await this.request(system, user, format, temperature, reasoning);
+      if (res.status !== 400) break;
+    }
+    if (!res!.ok) throw new Error(`${this.label} HTTP ${res!.status}`);
+    const body = (await res!.json()) as { choices?: { message?: { content?: string; reasoning?: string; reasoning_content?: string } }[] };
+    const msg = body.choices?.[0]?.message ?? {};
+    const [content, think] = splitThink(msg.content ?? "");
+    const raw = JSON.parse(content) as Record<string, unknown>;
     for (const k of Object.keys(raw)) if (raw[k] === null) delete raw[k];
-    return raw;
+    const reasoning = (msg.reasoning ?? msg.reasoning_content ?? think)?.trim();
+    return { value: raw, reasoning: reasoning || undefined, latencyMs: Date.now() - t0 };
+  }
+
+  async ask(system: string, user: string, schema: JsonSchema, temperature = 0.3): Promise<Record<string, unknown>> {
+    return (await this.askDetailed(system, user, schema, temperature)).value;
+  }
+
+  async decideDetailed(context: AgentContext): Promise<Detailed<unknown>> {
+    const r = await this.askDetailed(SYSTEM + "\nRespond with a JSON object {decision, targetWethWeight?, recheckMinutes?, reason}.", JSON.stringify(context), STRICT_SCHEMA as JsonSchema, 0);
+    return { ...r, value: normalize(r.value) };
   }
 
   async decide(context: AgentContext): Promise<unknown> {
-    return normalize(await this.ask(SYSTEM + "\nRespond with a JSON object {decision, targetWethWeight?, recheckMinutes?, reason}.", JSON.stringify(context), STRICT_SCHEMA as JsonSchema, 0));
+    return (await this.decideDetailed(context)).value;
   }
 }
 
@@ -186,16 +232,17 @@ export class OpenAIModel extends OpenAICompatibleModel {
 }
 
 export class GroqModel extends OpenAICompatibleModel {
-  constructor(apiKey: string, model: string, timeoutMs = 20_000) { super("Groq", "https://api.groq.com/openai/v1/chat/completions", apiKey, model, { strictSchema: true, timeoutMs }); }
+  constructor(apiKey: string, model: string, timeoutMs = 20_000) { super("Groq", "https://api.groq.com/openai/v1/chat/completions", apiKey, model, { strictSchema: true, reasoning: true, timeoutMs }); }
 }
 
-/** Primary then fallback; returns the first validated decision, or the errors from each provider. */
+/** Primary then fallback; returns the first validated decision (with the model's reasoning when exposed), or each provider's error. */
 export async function decideWithFallback(models: AgentModel[], context: AgentContext, bounds: DecisionBounds) {
   const errors: string[] = [];
   for (const m of models) {
     try {
-      const v = validateDecision(await m.decide(context), bounds);
-      if (v.ok) return { ok: true as const, decision: v.decision, targetPct: v.targetPct, provider: m.name, errors };
+      const d = m.decideDetailed ? await m.decideDetailed(context) : { value: await m.decide(context), latencyMs: 0 };
+      const v = validateDecision(d.value, bounds);
+      if (v.ok) return { ok: true as const, decision: v.decision, targetPct: v.targetPct, provider: m.name, errors, reasoning: d.reasoning, latencyMs: d.latencyMs };
       errors.push(`${m.name}: invalid output: ${v.error.slice(0, 200)}`);
     } catch (e) {
       errors.push(`${m.name}: ${(e as Error).message.slice(0, 200)}`);
