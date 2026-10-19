@@ -39,7 +39,12 @@ export async function prepareAuthorization(ctx: EngineContext, accountId: string
   // An installed permission (e.g. signing new limits) is replaced in the same owner batch: uninstall first, then install.
   // Uninstalling does not bump the Kernel validation nonce, so the install below stays valid in one UserOperation.
   const replacing = await installedGrants(ctx, st.account, live.filter((x) => x.session.status !== "PENDING_AUTHORIZATION" && x.compilation));
-  for (const x of live.filter((x) => x.session.status === "PENDING_AUTHORIZATION")) await ctx.db.update(agentSessions).set({ status: "ABANDONED" }).where(eq(agentSessions.id, x.session.id));
+  // While the old session stays live until the owner signs, new keys are staged as PENDING_REPLACEMENT: the
+  // one-live-session index (agent_sessions_one_active) does not cover that status. Reconcile promotes them.
+  const hasLive = live.some((x) => x.session.status !== "PENDING_AUTHORIZATION");
+  const pendingStatus = hasLive ? "PENDING_REPLACEMENT" : "PENDING_AUTHORIZATION";
+  await ctx.db.update(agentSessions).set({ status: "ABANDONED" })
+    .where(and(eq(agentSessions.accountId, accountId), inArray(agentSessions.status, ["PENDING_AUTHORIZATION", "PENDING_REPLACEMENT"])));
 
   const account = st.account.address as Address;
   const symbols = portfolioTargets(st.policy).assets.map((a) => a.symbol).filter((s) => s !== "USDC");
@@ -67,7 +72,7 @@ export async function prepareAuthorization(ctx: EngineContext, accountId: string
     const permissionId = permission.getIdentifier();
     const enc = encryptSessionKey(ctx.keyring, pk, account, permissionId);
     const [session] = await ctx.db.insert(agentSessions).values({ accountId, asset: a.symbol, policyId: st.policyRow.id, permissionId, signerAddress: signer.address,
-      ...enc, validAfter: compiled.validAfter, validUntil: compiled.validUntil, status: "PENDING_AUTHORIZATION" }).returning();
+      ...enc, validAfter: compiled.validAfter, validUntil: compiled.validUntil, status: pendingStatus }).returning();
     await ctx.db.insert(policyCompilations).values({
       policyId: st.policyRow.id, sessionId: session!.id, authPriceAnswer: compiled.evidence.authPrice.answer.toString(), authPriceDecimals: compiled.evidence.authPrice.decimals,
       authPriceSource: compiled.evidence.authPriceSource, authPriceTimestamp: compiled.evidence.authPriceTimestamp, bufferBps: compiled.evidence.bufferBps,

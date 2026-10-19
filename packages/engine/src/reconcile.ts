@@ -28,7 +28,7 @@ export async function reconcile(ctx: EngineContext) {
       if (receipt.success) await ctx.db.update(agentSessions).set({ status: "REVOKED", revokedAt: new Date(), revokeUserOpHash: receipt.userOpHash })
         .where(and(eq(agentSessions.accountId, row.accountId), inArray(agentSessions.status, ["ACTIVE", "REAUTH_REQUIRED"])));
       await ctx.db.update(agentSessions).set({ status: receipt.success ? "ACTIVE" : "FAILED", authorizeUserOpHash: receipt.userOpHash })
-        .where(and(eq(agentSessions.accountId, row.accountId), eq(agentSessions.status, "PENDING_AUTHORIZATION")));
+        .where(and(eq(agentSessions.accountId, row.accountId), inArray(agentSessions.status, ["PENDING_AUTHORIZATION", "PENDING_REPLACEMENT"])));
       await audit(receipt.success ? "AGENT_AUTHORIZED" : "AUTHORIZATION_FAILED", receipt.success ? "SUCCESS" : "FAILURE",
         receipt.success ? "Master authorized the agent session on-chain" : "Authorization UserOperation execution failed", evidence);
     }

@@ -61,7 +61,7 @@ export const agentSessions = pgTable("agent_sessions", {
   keyVersion: integer("key_version").notNull(),
   validAfter: timestamp("valid_after", { withTimezone: true }).notNull(),
   validUntil: timestamp("valid_until", { withTimezone: true }).notNull(),
-  /** PENDING_AUTHORIZATION → ACTIVE → REVOKED | EXPIRED | REAUTH_REQUIRED */
+  /** PENDING_AUTHORIZATION → ACTIVE → REVOKED | EXPIRED | REAUTH_REQUIRED; PENDING_REPLACEMENT → ACTIVE when a signed replacement revokes the old session */
   status: text("status").notNull(),
   authorizeUserOpHash: text("authorize_user_op_hash"),
   revokeUserOpHash: text("revoke_user_op_hash"),
