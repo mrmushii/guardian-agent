@@ -5,8 +5,8 @@ import { createDb, type Db } from "@guardian/db";
 import { keyringFromEnv, type Keyring } from "@guardian/account";
 import { GeminiModel, GroqModel, OpenAIModel, type AgentModel } from "@guardian/agent";
 
-/** LLM_PROVIDER / LLM_FALLBACK_PROVIDER: groq | gemini | openai. A provider without its key or model is skipped. */
-function modelFor(provider: string | undefined, model: string | undefined, env: NodeJS.ProcessEnv): AgentModel | null {
+/** LLM_PROVIDER / LLM_FALLBACK_PROVIDER: groq | gemini | openai. A provider without its key or model is skipped. Also used by scripts/eval-ai.ts. */
+export function modelFor(provider: string | undefined, model: string | undefined, env: NodeJS.ProcessEnv): AgentModel | null {
   if (!provider || !model) return null;
   switch (provider.toLowerCase()) {
     case "groq": return env.GROQ_API_KEY ? new GroqModel(env.GROQ_API_KEY, model) : null;

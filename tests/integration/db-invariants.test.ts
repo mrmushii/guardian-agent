@@ -3,7 +3,7 @@
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { eq } from "drizzle-orm";
 import { resolve } from "node:path";
-import { agentActions, auditEvents, claimAction, createDb, dailyUsedCents, policies, releaseBudget, reserveBudget, smartAccounts, transitionAction } from "@guardian/db";
+import { agentActions, auditEvents, claimAction, createDb, dailyUsedCents, policies, releaseBudget, reserveBudget, smartAccounts, transitionAction, watcherCheckpoints } from "@guardian/db";
 
 try { process.loadEnvFile(resolve(__dirname, "../../.env")); } catch { /* env provided */ }
 const run = process.env.DATABASE_URL ? describe : describe.skip;
@@ -21,6 +21,8 @@ run("database invariants", () => {
     await db.delete(auditEvents).where(eq(auditEvents.accountId, accountId));
     await db.delete(agentActions).where(eq(agentActions.accountId, accountId));
     await db.delete(policies).where(eq(policies.accountId, accountId));
+    // A running worker may have checkpointed this temporary account; clear that before deleting it.
+    await db.delete(watcherCheckpoints).where(eq(watcherCheckpoints.accountId, accountId));
     await db.delete(smartAccounts).where(eq(smartAccounts.id, accountId));
     await close();
   });

@@ -10,7 +10,8 @@
     "db:migrate": "node --env-file=.env ./node_modules/drizzle-kit/bin.cjs migrate",
     "guardian": "node --env-file=.env --import tsx scripts/guardian.ts",
     "worker": "node --env-file=.env --import tsx apps/worker/src/index.ts",
-    "test:e2e": "playwright test"
+    "test:e2e": "playwright test",
+    "eval:ai": "node --env-file=.env --import tsx scripts/eval-ai.ts"
   },
   "devDependencies": {
     "@guardian/account": "workspace:*",

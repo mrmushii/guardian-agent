@@ -73,8 +73,11 @@ async function evaluate(accountId: string, trigger: { key: string; kind: string;
     await recordCheck(accountId, block, "out_of_band", `${summary} — ${"state" in res ? `action ${String(res.state).toLowerCase().replaceAll("_", " ")}` : `skipped (${String(res.skipped).toLowerCase().replaceAll("_", " ")})`}`);
     log.info({ accountId, trigger: trigger.key, res }, "rebalance evaluated");
   } catch (e) {
-    await recordCheck(accountId, null, "error", `Check failed (fail closed): ${(e as Error).message.split(String.fromCharCode(10))[0]!.slice(0, 200)}`);
-    log.error({ accountId, err: (e as Error).message }, "evaluation failed (fail closed)");
+    // Drizzle wraps driver errors ("Failed query: …"); the cause holds the real reason (e.g. connection limit).
+    const err = e as Error & { cause?: { message?: string } };
+    const why = err.cause?.message ?? err.message.split(String.fromCharCode(10))[0]!;
+    await recordCheck(accountId, null, "error", `Check failed safely, nothing was traded: ${why.slice(0, 200)}`);
+    log.error({ accountId, err: err.message.split(String.fromCharCode(10))[0], cause: err.cause?.message }, "evaluation failed (fail closed)");
   } finally {
     inflight.delete(accountId);
   }
