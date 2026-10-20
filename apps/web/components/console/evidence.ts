@@ -136,7 +136,7 @@ export const EVIDENCE = {
       "pass": true
     },
     {
-      "name": "B key: direct Bâ†’WETH (bypassing the USDC hub)",
+      "name": "B key: direct B→WETH (bypassing the USDC hub)",
       "result": "VALIDATION_REJECTED",
       "detail": "FailedOpWithRevert(0, AA23 reverted, 0x59d52e40)",
       "pass": true

@@ -3,7 +3,7 @@ import { useEffect, useRef, useState } from "react";
 import s from "./chat.module.css";
 import { Icon } from "./icons";
 import { AgentOrb, YourTasks, type Ctl } from "./Hero";
-import { agentMode, api, portfolioOf, short, tasksOf, time, type Ev } from "./model";
+import { agentMode, api, portfolioOf, tasksOf, time, type Ev } from "./model";
 import type { View } from "./Shell";
 
 export type Msg = {
@@ -129,7 +129,7 @@ export function AgentChat({ ctl, proactive, setView, onSeen, initialAsk, onIniti
         <input value={text} onChange={(e) => setText(e.target.value)} placeholder="Ask Guardian anything…" maxLength={500} aria-label="Message the agent" />
         <button className="primary" type="submit" disabled={thinking || !text.trim()} aria-label="Send"><Icon name="send" size={16} /></button>
       </form>
-      <p className={s.fine}>Guardian answers from your live data. It can't move funds or change limits from chat — account {short(dash.identities.smartAccount)} enforces your rules.</p>
+      <p className={s.fine}>Guardian answers from your live data. Chat can't move money or change your limits.</p>
     </section>
   );
 }

@@ -44,7 +44,7 @@ export function Sidebar({ dash, mode, view, setView, onPause, busy, onPalette, u
         </ul>
         <div className={s.foot}>
           <span className={`${s.net} ${dash.network.isTestnet ? s.netTest : s.netMain}`}>{dash.network.name}</span>
-          <span className={s.acct}>Account <span className="hash">{short(dash.identities.smartAccount)}</span></span>
+          <span className={`${s.acct} tech`}>Account <span className="hash">{short(dash.identities.smartAccount)}</span></span>
           <button className={s.pause} onClick={onPause} disabled={busy}>
             <Icon name={dash.monitoring.enabled ? "pause" : "play"} size={16} />{dash.monitoring.enabled ? "Pause agent" : "Resume agent"}
           </button>

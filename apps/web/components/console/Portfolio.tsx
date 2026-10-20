@@ -66,7 +66,7 @@ export function PortfolioView({ ctl }: { ctl: Ctl }) {
     <>
       <div className={p.top}>
         <section className={`glass ${s.panel}`} aria-label="Allocation">
-          <div className={s.panelHead}><h2>Allocation</h2><span className="muted" style={{ fontSize: "0.78rem" }}>{dash.network.name}</span></div>
+          <div className={s.panelHead}><h2>Allocation</h2><span className="muted tech" style={{ fontSize: "0.78rem" }}>{dash.network.name}</span></div>
           {data ? <Donut rows={data.assets} total={data.totalUsd} /> : <div className={p.skeleton} />}
         </section>
         <section className={`glass ${s.panel}`} aria-label="Portfolio summary">
@@ -77,7 +77,7 @@ export function PortfolioView({ ctl }: { ctl: Ctl }) {
             <div><span>Tradable here</span><b>{tradable}</b></div>
             <div><span>{data?.multi ? "Drift band" : "Simulated"}</span><b>{data?.multi ? `±${data.driftPct} pts` : data?.assets.filter((a) => a.status === "PAPER").length ?? "—"}</b></div>
           </div>
-          <p className={s.fine}>Every asset trades against USDC. “Tradable” assets passed an on-chain check; “Simulated” ones have a live price but no usable pool on this network.</p>
+          <p className={s.fine}>“Tradable” assets can be bought and sold here. “Simulated” ones have a live price but can't be traded on this test network.</p>
           <div className={s.row} style={{ marginTop: 12 }}>
             <button className="primary" onClick={() => setAdding(true)}><Icon name="up" size={15} /> Add token</button>
             <button disabled={!!busy} onClick={() => run("verify", async () => { await load(true); return "Re-verified every asset on-chain"; })}><Icon name="check" size={15} /> Re-verify</button>
@@ -148,9 +148,9 @@ function AssetDrawer({ a, onClose, onRemove }: { a: Holding; onClose: () => void
         <dl className={s.kv}>
           <dt>Price</dt><dd>{usd(a.priceUsd, 4)}</dd>
           <dt>Your balance</dt><dd>{amt(a.balance)} {a.symbol}</dd>
-          <dt>Token</dt><dd className="hash">{a.token ? short(a.token) : "—"}</dd>
-          <dt>Price feed</dt><dd className="hash">{a.feed ? short(a.feed) : "—"}</dd>
-          <dt>Pool fee</dt><dd>{a.feeTier ? `${a.feeTier / 10_000}%` : "—"}</dd>
+          <dt className="tech">Token</dt><dd className="hash tech">{a.token ? short(a.token) : "—"}</dd>
+          <dt className="tech">Price feed</dt><dd className="hash tech">{a.feed ? short(a.feed) : "—"}</dd>
+          <dt className="tech">Pool fee</dt><dd className="tech">{a.feeTier ? `${a.feeTier / 10_000}%` : "—"}</dd>
           <dt>Checked</dt><dd>{new Date(a.verifiedAt).toLocaleString()}</dd>
         </dl>
         {onRemove && <button className="danger" onClick={onRemove}>Remove token</button>}

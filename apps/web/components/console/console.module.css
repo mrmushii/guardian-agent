@@ -204,3 +204,24 @@
 .mPct, .mPctOut { text-align: right; font-weight: 750; font-variant-numeric: tabular-nums; }
 .mPct small, .mPctOut small { color: var(--ink-3); font-weight: 500; font-size: 0.74rem; }
 .mPctOut { color: var(--bad); }
+
+/* ---------- Simple / detailed view ---------- */
+.more { margin-top: 14px; border-top: 1px solid var(--line); padding-top: 10px; }
+.more > summary { list-style: none; display: inline-flex; align-items: center; gap: 6px; cursor: pointer; font-size: 0.82rem; font-weight: 600; color: var(--ink-3); user-select: none; }
+.more > summary::-webkit-details-marker { display: none; }
+.more > summary:hover { color: var(--ink); }
+.more > summary svg { transition: transform 0.2s var(--ease); }
+.more[open] > summary svg { transform: rotate(90deg); }
+.moreBody { margin-top: 10px; animation: rise 0.25s ease-out; }
+.moreBody > :first-child { margin-top: 0; }
+
+.switch { display: flex; align-items: flex-start; gap: 12px; cursor: pointer; }
+.switch input { position: absolute; opacity: 0; width: 1px; height: 1px; }
+.switch i { flex: none; width: 42px; height: 24px; border-radius: 999px; background: var(--line); position: relative; transition: background 0.2s var(--ease); margin-top: 2px; }
+.switch i::after { content: ""; position: absolute; top: 3px; left: 3px; width: 18px; height: 18px; border-radius: 50%; background: #fff; box-shadow: 0 1px 3px rgba(0,0,0,.3); transition: transform 0.2s var(--ease); }
+.switch input:checked + i { background: var(--accent-gradient); }
+.switch input:checked + i::after { transform: translateX(18px); }
+.switch input:focus-visible + i { outline: 2px solid var(--focus); outline-offset: 2px; }
+.switch span { display: flex; flex-direction: column; gap: 2px; }
+.switch small { color: var(--ink-3); font-size: 0.8rem; }
+.note { margin: 0 0 12px; padding: 10px 12px; border-radius: var(--radius-sm); background: var(--warn-wash); color: var(--ink-2); font-size: 0.86rem; }

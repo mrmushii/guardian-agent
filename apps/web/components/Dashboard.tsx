@@ -9,7 +9,8 @@ import { agentMode, api, short, type Dash, type Ev } from "./console/model";
 import { AgentOrb, StatusHero, YourTasks, type Ctl } from "./console/Hero";
 import { AgentThinking } from "./console/Thinking";
 import { Guardrails } from "./console/Guardrails";
-import { AdversarialLabPanel, SimulatePanel } from "./console/Interact";
+import { SimulatePanel } from "./console/Interact";
+import { SecurityCenter } from "./console/Security";
 import { History } from "./console/History";
 import { Onboarding, seenOnboarding } from "./console/Onboarding";
 import { CommandPalette, Sidebar, VIEWS, type Command, type View } from "./console/Shell";
@@ -19,6 +20,7 @@ import { LimitsEditor } from "./console/Limits";
 import { Icon } from "./console/icons";
 import { PortfolioView } from "./console/Portfolio";
 import { TargetEditor } from "./console/Targets";
+import { DetailProvider, DetailSwitch, More, useDetail } from "./console/detail";
 
 type Theme = "dark" | "light" | null;
 const THEME_KEY = "guardian.theme";
@@ -26,6 +28,11 @@ const HIDDEN_EVENTS = new Set(["CHAT_Q", "CHAT_A"]);
 const viewFromHash = (): View => { const h = typeof location === "undefined" ? "" : location.hash.slice(1); return (VIEWS.some((v) => v.id === h) ? h : "overview") as View; };
 
 export default function Dashboard() {
+  return <DetailProvider><Console /></DetailProvider>;
+}
+
+function Console() {
+  const detail = useDetail();
   const [dash, setDash] = useState<Dash | null>(null);
   const [events, setEvents] = useState<Ev[]>([]);
   const [needsLogin, setNeedsLogin] = useState(false);
@@ -176,11 +183,13 @@ export default function Dashboard() {
       ...VIEWS.map((v) => ({ id: `go-${v.id}`, label: `Go to ${v.label}`, icon: v.icon, run: () => setView(v.id), keywords: "open view navigate" })),
       { id: "check", label: "Check portfolio now", hint: "run the agent", icon: "bolt", run: () => void evaluate(), keywords: "evaluate rebalance" },
       { id: "pause", label: dash.monitoring.enabled ? "Pause agent" : "Resume agent", icon: dash.monitoring.enabled ? "pause" : "play", run: () => void pause(), keywords: "stop start monitoring" },
+      { id: "security", label: "Run security tests", hint: "Settings", icon: "key", run: () => setView("settings"), keywords: "attack injection proof audit safe" },
       { id: "limits", label: "Edit limits", icon: "limits", run: () => setView("limits"), keywords: "policy band target budget cap" },
       { id: "ask-why", label: "Ask: why did you trade last time?", icon: "agent", run: () => { setPendingAsk("Why did you trade last time?"); setView("agent"); } },
       { id: "ask-how", label: "Ask: how is my portfolio doing?", icon: "agent", run: () => { setPendingAsk("How is my portfolio doing?"); setView("agent"); } },
       { id: "signout", label: dash.sandbox ? "Leave Judge Sandbox" : "Sign out", hint: "switch account", icon: "hand", run: () => void signOut(), keywords: "logout sandbox owner switch account" },
       { id: "theme", label: "Toggle light / dark theme", icon: "sun", run: toggleTheme, keywords: "appearance" },
+      { id: "detail", label: detail.full ? "Hide technical details" : "Show technical details", icon: "help", run: () => detail.setFull(!detail.full), keywords: "simple advanced expert addresses" },
       { id: "help", label: "How Guardian works", icon: "help", run: () => setHelp(true), keywords: "onboarding guide" },
     ];
     if (dash.network.isTestnet && dash.demo.enabled) c.push(
@@ -188,22 +197,22 @@ export default function Dashboard() {
       { id: "sim-down", label: "Simulate: WETH down $5", hint: "testnet", icon: "down", run: () => void simulate("down", 5), keywords: "demo market move" },
     );
     return c;
-  }, [dash, toggleTheme]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [dash, toggleTheme, detail.full]); // eslint-disable-line react-hooks/exhaustive-deps
 
   if (needsLogin) return (
     <main className={s.login}>
       <div className={`glass ${s.loginCard}`}>
         <AgentOrb mode="watching" large />
         <h1>Guardian Agent</h1>
-        <p>An AI agent that keeps your WETH/USDC portfolio in balance — inside limits your own smart account enforces.</p>
+        <p>Pick the mix you want. Guardian keeps your WETH and USDC there for you, and it can never trade outside the limits you sign.</p>
         <div className={s.features}>
-          <div className={s.feature}><Icon name="limits" /> <span>You set the limits. The agent can't exceed them, even if tricked.</span></div>
-          <div className={s.feature}><Icon name="agent" /> <span>Talk to it: it explains every decision in plain language.</span></div>
-          <div className={s.feature}><Icon name="hand" /> <span>Bigger trades wait for your signature. Pause or revoke anytime.</span></div>
+          <div className={s.feature}><Icon name="limits" /> <span>Your wallet enforces your limits, not the AI. Even a tricked agent can't break them.</span></div>
+          <div className={s.feature}><Icon name="agent" /> <span>Ask it anything. It explains every trade in plain words.</span></div>
+          <div className={s.feature}><Icon name="hand" /> <span>Big trades wait for your signature. Pause or switch it off any time.</span></div>
         </div>
         <button className="primary" onClick={signIn} disabled={busy === "signin"} style={{ width: "100%" }}>{busy === "signin" ? "Waiting for wallet…" : "Sign in with owner wallet"}</button>
-        <button onClick={sandboxSignIn} disabled={!!busy} style={{ width: "100%", marginTop: 10 }}>{busy === "sandbox" ? "Opening sandbox…" : "Enter Judge Sandbox (Base Sepolia live account)"}</button>
-        <p className={s.fine}>No wallet needed. The sandbox can watch, chat, simulate market moves and run the agent; changing limits or signing stays with the owner.</p>
+        <button onClick={sandboxSignIn} disabled={!!busy} style={{ width: "100%", marginTop: 10 }}>{busy === "sandbox" ? "Opening sandbox…" : "Try the live demo (no wallet needed)"}</button>
+        <p className={s.fine}>The demo runs on a real test account. You can watch the agent, chat with it and simulate price moves. Only the owner can change limits.</p>
         {notice && <p className={notice.kind === "err" ? s.toastErr : s.toastOk} role="status">{notice.text}</p>}
       </div>
     </main>
@@ -221,7 +230,7 @@ export default function Dashboard() {
       <Sidebar dash={dash} mode={mode} view={view} setView={(v) => { setView(v); if (v === "agent") setUnread(0); }} onPause={() => void pause()} busy={!!busy} onPalette={() => setPalette(true)} unread={unread} />
       <main className={sh.main}>
         {dash.sandbox && <div className={`glass ${s.toast} ${s.row}`} role="note" style={{ justifyContent: "space-between", alignItems: "center" }}>
-          <span>Judge Sandbox · live Base Sepolia account {short(dash.identities.smartAccount)} · settings are read-only</span>
+          <span>Live demo · you can look around and test, but not change limits<span className="tech"> · account {short(dash.identities.smartAccount)} on {dash.network.name}</span></span>
           <button disabled={!!busy} onClick={signOut}>{busy === "signout" ? "Signing out…" : "Switch to owner wallet"}</button>
         </div>}
         {notice && <p className={`glass ${s.toast} ${notice.kind === "err" ? s.toastErr : s.toastOk}`} role="status">{notice.text}</p>}
@@ -247,40 +256,43 @@ export default function Dashboard() {
         </>}
 
         {view === "portfolio" && <>
-          {head("Portfolio", "Every asset you hold or can add — verified on-chain, valued at Chainlink prices.")}
+          {head("Portfolio", "What you hold and what it's worth right now.")}
           <PortfolioView ctl={ctl} />
         </>}
 
         {view === "agent" && <>
-          {head("Agent", "Talk to Guardian about your portfolio, its decisions and your limits.")}
+          {head("Agent", "Ask about your money, its decisions or your limits.")}
           <AgentChatWithAsk ctl={ctl} proactive={proactive} setView={setView} onSeen={() => setUnread(0)} pendingAsk={pendingAsk} clearAsk={() => setPendingAsk(null)} />
         </>}
 
         {view === "activity" && <>
-          {head("Activity", "Everything the agent noticed, decided and did — with on-chain proof.")}
+          {head("Activity", "Everything the agent noticed, decided and did.")}
           <History dash={dash} events={events} />
         </>}
 
         {view === "limits" && dash.policy && <>
-          {head("Limits", "The rules your smart account enforces on the agent. Preview the effect before you save.")}
+          {head("Limits", "The rules the agent has to follow. See the effect before you save.")}
           <TargetEditor ctl={ctl} />
           <LimitsEditor ctl={ctl} points={insights?.history ?? []} />
           <Guardrails {...ctl} />
         </>}
 
         {view === "settings" && <>
-          {head("Settings", "AI model, appearance, demo tools and help.")}
+          {head("Settings", "Security, display and demo tools.")}
+          <SecurityCenter {...ctl} />
           <div className={s.grid}>
             <div className={s.col}>
               <section className={`glass ${s.panel}`} aria-label="AI model">
                 <div className={s.panelHead}><h2>AI model</h2></div>
-                <p className={s.lead}>Models are tried in order. If none answers, Guardian uses your own target as a safe rule for small trades, and pauses after 3 failures in a row.</p>
-                <ol className={s.feed}>{(dash.agent.models.length ? dash.agent.models : ["none configured"]).map((m, i) => (
+                <p className={s.lead}>If the AI is ever unavailable, Guardian falls back to your own target for small trades, and pauses after 3 failures in a row.</p>
+                <More label={`Models in use (${dash.agent.models.length})`}><ol className={s.feed}>{(dash.agent.models.length ? dash.agent.models : ["none configured"]).map((m, i) => (
                   <li key={m} className={s.feedItem}><span className={s.feedIcon}>{i + 1}</span><div><div className={s.feedTitle}>{m.split(":")[1] ?? m}</div><p className={s.feedWhy}>{i === 0 ? "Primary" : "Fallback"} · {m.split(":")[0]}</p></div></li>
-                ))}</ol>
+                ))}</ol></More>
               </section>
               <section className={`glass ${s.panel}`} aria-label="Appearance">
-                <div className={s.panelHead}><h2>Appearance & help</h2></div>
+                <div className={s.panelHead}><h2>Display & help</h2></div>
+                <DetailSwitch />
+                <div style={{ height: 14 }} />
                 <div className={s.row}>
                   <button onClick={toggleTheme}><Icon name="sun" size={16} /> Toggle theme</button>
                   <button onClick={() => setHelp(true)}><Icon name="help" size={16} /> How Guardian works</button>
@@ -289,7 +301,7 @@ export default function Dashboard() {
                 </div>
               </section>
             </div>
-            <div className={s.col}><SimulatePanel {...ctl} /><AdversarialLabPanel {...ctl} /></div>
+            <div className={s.col}><SimulatePanel {...ctl} /></div>
           </div>
         </>}
       </main>

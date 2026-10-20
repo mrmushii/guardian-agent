@@ -3,12 +3,16 @@ import { useState } from "react";
 import s from "./console.module.css";
 import { explain, short, time, type Dash, type Ev } from "./model";
 import { AiThoughts, Evidence } from "./Thinking";
+import { More, useDetail } from "./detail";
 
 type Tab = "activity" | "transactions" | "account";
+const TAB_LABEL: Record<Tab, string> = { activity: "Activity", account: "Results", transactions: "Transactions" };
 const FILTERS = { all: () => true, trades: (e: Ev) => ["CONFIRMED", "SUBMITTED", "AI_DECISION", "PLAN", "DEMO_MOVE"].includes(e.type), problems: (e: Ev) => e.level === "WARNING" || e.level === "FAILURE" };
 
 export function History({ dash, events }: { dash: Dash; events: Ev[] }) {
-  const [tab, setTab] = useState<Tab>("activity");
+  const { full } = useDetail();
+  const [picked, setTab] = useState<Tab>("activity");
+  const tab: Tab = picked === "transactions" && !full ? "activity" : picked;
   const [filter, setFilter] = useState<keyof typeof FILTERS>("all");
   const [limit, setLimit] = useState(25);
   const o = dash.outcomes;
@@ -19,8 +23,8 @@ export function History({ dash, events }: { dash: Dash; events: Ev[] }) {
       <div className={s.panelHead}>
         <h2>History</h2>
         <div className={s.tabs} role="tablist">
-          {(["activity", "transactions", "account"] as Tab[]).map((t) => (
-            <button key={t} role="tab" aria-selected={tab === t} className={`${s.tab} ${tab === t ? s.tabOn : ""}`} onClick={() => setTab(t)}>{t[0]!.toUpperCase() + t.slice(1)}</button>
+          {(["activity", "account", ...(full ? ["transactions"] : [])] as Tab[]).map((t) => (
+            <button key={t} role="tab" aria-selected={tab === t} className={`${s.tab} ${tab === t ? s.tabOn : ""}`} onClick={() => setTab(t)}>{TAB_LABEL[t]}</button>
           ))}
         </div>
       </div>
@@ -87,6 +91,7 @@ export function History({ dash, events }: { dash: Dash; events: Ev[] }) {
             <div className={s.outcome}><b>{o.stopped}</b><span>Stopped or reverted</span></div>
             <div className={s.outcome}><b>{o.noAction}</b><span>No action needed</span></div>
           </div>
+          <More label="Addresses and network">
           <dl className={s.kv}>
             <dt>You (master owner)</dt><dd className="hash">{dash.identities.masterOwner}</dd>
             <dt>Smart account</dt><dd className="hash">{dash.identities.smartAccount}</dd>
@@ -95,6 +100,7 @@ export function History({ dash, events }: { dash: Dash; events: Ev[] }) {
             <dt>AI models</dt><dd>{dash.agent.models.join(" → ") || "none configured"}</dd>
             <dt>Network</dt><dd>{dash.network.name} ({dash.network.chainId})</dd>
           </dl>
+          </More>
         </div>
       )}
     </section>

@@ -6,6 +6,7 @@ import { Icon } from "./icons";
 import { AllocationChart, type Point } from "./Insights";
 import { api, portfolioOf, type Policy } from "./model";
 import type { Ctl } from "./Hero";
+import { More } from "./detail";
 
 type WhatIf = { action: "NOTHING" | "AGENT" | "PARTIAL" | "ASK_OWNER" | "SIMULATED"; text: string; wethPct: number; usd?: number };
 const ACTION_LABEL: Record<WhatIf["action"], { label: string; tone: string }> = {
@@ -40,7 +41,7 @@ export function LimitsEditor({ ctl, points }: { ctl: Ctl; points: Point[] }) {
   const num = (k: keyof Policy) => (e: React.ChangeEvent<HTMLInputElement>) => setP({ ...p, [k]: Number(e.target.value) });
   const save = () => run("policy", async () => {
     const r = await api<{ version: number }>("/api/policy", p);
-    return `Saved limits v${r.version}. Sign the new permission (Overview → Your tasks) to apply them on-chain.`;
+    return `Limits saved (v${r.version}). Approve them in Overview → Your tasks to switch them on.`;
   });
 
   return (
@@ -65,17 +66,19 @@ export function LimitsEditor({ ctl, points }: { ctl: Ctl; points: Point[] }) {
             <label className={l.field}><div className={l.label}><span>Max per trade</span></div><div className={l.money}><span>$</span><input type="number" min={1} step={1} value={p.maxAutoTxUsd} onChange={num("maxAutoTxUsd")} /></div><small>Bigger trades ask you.</small></label>
             <label className={l.field}><div className={l.label}><span>Daily budget</span></div><div className={l.money}><span>$</span><input type="number" min={1} step={1} value={p.dailyBudgetUsd} onChange={num("dailyBudgetUsd")} /></div><small>Total per day on its own.</small></label>
           </div>
+          <More label="Advanced settings">
           <div className={l.pair}>
-            <label className={l.field}><div className={l.label}><span>Max slippage</span></div><div className={l.money}><input type="number" min={0.05} max={5} step={0.05} value={p.maxSlippageBps / 100} onChange={(e) => setP({ ...p, maxSlippageBps: Math.round(Number(e.target.value) * 100) })} /><span>%</span></div></label>
-            <label className={l.field}><div className={l.label}><span>Permission lasts</span></div><div className={l.money}><input type="number" min={1} step={1} value={p.sessionDurationHours} onChange={num("sessionDurationHours")} /><span>h</span></div></label>
+            <label className={l.field}><div className={l.label}><span>Max price slippage</span></div><div className={l.money}><input type="number" min={0.05} max={5} step={0.05} value={p.maxSlippageBps / 100} onChange={(e) => setP({ ...p, maxSlippageBps: Math.round(Number(e.target.value) * 100) })} /><span>%</span></div></label>
+            <label className={l.field}><div className={l.label}><span>Agent access lasts</span></div><div className={l.money}><input type="number" min={1} step={1} value={p.sessionDurationHours} onChange={num("sessionDurationHours")} /><span>h</span></div></label>
           </div>
+          </More>
         </div>
         {error && <p className={s.error} role="alert">{error}</p>}
         <div className={s.row} style={{ marginTop: 16 }}>
           <button className="primary" disabled={!!error || !changed || !!busy} onClick={save}>{busy === "policy" ? "Saving…" : "Save limits"}</button>
           <button disabled={!changed} onClick={() => setP(policy)}>Reset</button>
         </div>
-        <p className={s.fine}>Saving creates policy v{(dash.policyVersion ?? 0) + 1}. The agent keeps the current on-chain limits until you sign the new permission.</p>
+        <p className={s.fine}>New limits take effect after you approve them with your wallet. Until then the agent keeps the current ones.</p>
       </section>
 
       <div className={s.col}>

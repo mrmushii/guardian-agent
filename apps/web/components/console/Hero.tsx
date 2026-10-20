@@ -132,7 +132,7 @@ export function YourTasks({ dash, busy, run, masterSign }: Ctl) {
         <div className={s.allSet}><span className={s.check}>✓</span><div><strong>You're all set.</strong><div className="muted">Guardian handles moves up to ${dash.policy?.maxAutoTxUsd ?? 10} on its own. Anything bigger will show up here for your signature.</div></div></div>
       ) : tasks.map((t, i) => (
         <div key={i} className={s.task} aria-label={t.kind === "approve" ? "Waiting for your approval" : undefined}>
-          <div className={s.taskTitle}>✋ {t.title}</div>
+          <div className={s.taskTitle}>{t.kind === "confirming" ? "⏳" : "✋"} {t.title}</div>
           <p className={s.taskDetail}>{t.detail}</p>
           {t.action?.decision?.reason && <p className={s.taskDetail}><em>Agent: “{t.action.decision.reason}”</em></p>}
           <div className={s.row}>{button(t)}</div>

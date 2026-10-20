@@ -38,8 +38,9 @@ export type Ev = { id: string; type: string; level: "INFO" | "SUCCESS" | "WARNIN
 
 export const api = async <T,>(path: string, body?: unknown): Promise<T> => {
   const r = await fetch(path, body === undefined ? { cache: "no-store" } : { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(body) });
-  const j = await r.json();
-  if (!r.ok) throw Object.assign(new Error(j.error ?? `Request failed (${r.status})`), { status: r.status });
+  // A crashed or restarting server answers with an HTML page; show a readable error instead of a JSON parse failure.
+  const j = await r.json().catch(() => null);
+  if (!r.ok || j === null) throw Object.assign(new Error(j?.error ?? `The server had a problem (${r.status}). Please try again in a moment.`), { status: r.status });
   return j as T;
 };
 
@@ -77,15 +78,22 @@ export const MODE_LABEL: Record<AgentMode, string> = {
 };
 
 /** Owner to-do items, most urgent first. */
-export type Task = { kind: "approve" | "sign-policy" | "authorize" | "resume" | "signature"; title: string; detail: string; action?: Action };
+export type Task = { kind: "approve" | "sign-policy" | "authorize" | "confirming" | "resume" | "signature"; title: string; detail: string; action?: Action };
 export function tasksOf(d: Dash): Task[] {
   const t: Task[] = [];
   for (const a of d.actions.filter((a) => a.state === "PENDING_APPROVAL" || a.state === "MASTER_SIGNING"))
     t.push({ kind: "approve", action: a,
       title: a.plan?.direction === "BUY_WETH" ? `Approve a purchase of ${weth(a.plan?.wethWei)} WETH` : `Approve a sale of ≈ $${(Number(a.requestedUsdCents ?? 0) / 100).toFixed(2)} of WETH`,
-      detail: `This trade is bigger than the agent may do alone (${(a.reasons ?? []).map(humanize).join(", ") || "needs your signature"}). Prices are rechecked before you sign.` });
-  if (d.policyAheadOfSession)
-    t.push({ kind: "sign-policy", title: "Sign to apply your new limits", detail: `You saved policy v${d.policyVersion}. The agent keeps using the old limits until you sign a new on-chain permission.` });
+      detail: "This trade is bigger than the agent is allowed to make alone, so it needs your OK. Prices are checked again before you sign." });
+  // A signed authorization is on its way: show progress instead of asking for the same signature again.
+  const confirming = d.operations.some((o) => (o.purpose === "AUTHORIZE" || o.purpose === "REVOKE") && ["SUBMITTING", "SUBMITTED", "UNKNOWN"].includes(o.state));
+  const workerUp = !!d.watch.heartbeatAt && Date.now() - new Date(d.watch.heartbeatAt).getTime() < 45_000;
+  if (confirming)
+    t.push({ kind: "confirming", title: "Confirming your signature…", detail: workerUp
+      ? "Your signature was sent. The agent switches on as soon as the network confirms it, usually within a minute. No need to sign again."
+      : "Your signature was sent, but the agent's background service is offline, so it can't be confirmed yet. Start the worker and this finishes on its own. No need to sign again." });
+  else if (d.policyAheadOfSession)
+    t.push({ kind: "sign-policy", title: "Sign to apply your new limits", detail: "You changed your limits. Approve them with your wallet and the agent will start following them." });
   else if (!d.session || d.session.onChain !== "ACTIVE")
     t.push({ kind: "authorize", title: d.session ? "Re-authorize the agent" : "Authorize the agent", detail: d.session
       ? `The agent's permission is ${humanize(d.session.onChain)}. Sign a new one so it can keep your portfolio in range.`
@@ -115,7 +123,7 @@ export function headline(d: Dash): { title: string; body: string } {
   if (mode === "paused") return { title: "I'm paused", body: `WETH is ${pct} of your portfolio (allowed ${band}). I won't trade until you resume me.` };
   if (mode === "thinking") return { title: "I'm deciding what to do", body: `WETH moved to ${pct}, outside your ${band} range. I'm checking prices, risk and your limits.` };
   if (mode === "acting") return { title: `I'm ${latest?.plan?.direction === "BUY_WETH" ? "buying WETH" : "selling WETH"} to rebalance`, body: `Bringing WETH from ${pct} back toward your ${pol.targetEthPct}% target. The swap is on its way to the chain.` };
-  if (mode === "needs-you") return { title: "I need you for something", body: "See “Your tasks” below — one signature and I can continue." };
+  if (mode === "needs-you") return { title: "I need you for something", body: "Check “Your tasks” below. One signature and I can carry on." };
   if (mode === "offline") return { title: "I'm watching, but I can't act", body: `WETH is ${pct}. Authorize me so I can rebalance when it leaves ${band}.` };
   if (p.assessment === "WITHIN_BAND") return { title: "All good — nothing to do", body: `WETH is ${pct} of your $${Number(p.totalUsd).toFixed(2)} portfolio, inside your ${band} range. I check every new block.` };
   return { title: "Your portfolio is out of range", body: `WETH is ${pct}, outside ${band}. I'll ${p.assessment === "SELL_WETH" ? "sell" : "buy"} WETH on the next check, unless a cooldown is running.` };
