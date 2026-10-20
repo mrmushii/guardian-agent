@@ -1,5 +1,5 @@
 import { and, eq, inArray } from "drizzle-orm";
-import { encodeFunctionData, erc20Abi, verifyMessage, type Address, type Hex } from "viem";
+import { encodeFunctionData, erc20Abi, formatEther, parseAbi, verifyMessage, type Address, type Hex } from "viem";
 import { generatePrivateKey, privateKeyToAccount } from "viem/accounts";
 import { toECDSASigner } from "@zerodev/permissions/signers";
 import { KernelV3_3AccountAbi } from "@zerodev/sdk";
@@ -15,7 +15,7 @@ import { assetBySymbolFor, marketFor } from "./assets.js";
 import { multiPortfolio } from "./multi.js";
 import { deserializeOp, prepareMasterOp, serializeOp, submitSignedOp } from "./userops.js";
 
-export type MasterPurpose = "AUTHORIZE" | "REVOKE" | "REBALANCE";
+export type MasterPurpose = "AUTHORIZE" | "REVOKE" | "REBALANCE" | "WRAP";
 
 async function storeForSignature(ctx: EngineContext, p: { accountId: string; purpose: MasterPurpose; owner: Address; calls: HexCall[]; actionId?: string; sessionId?: string }) {
   const { op, userOpHash } = await prepareMasterOp(ctx, p.owner, p.calls);
@@ -123,6 +123,17 @@ export async function prepareRevocation(ctx: EngineContext, accountId: string) {
   if (!grants.length) throw new Error("The agent permission is no longer installed on-chain — nothing to revoke");
   const calls = await revokeAgentCallsMulti(ctx.network, st.account.address as Address, grants);
   return storeForSignature(ctx, { accountId, purpose: "REVOKE", owner: st.account.ownerAddress as Address, calls, sessionId: live[0]!.session.id });
+}
+
+/** "Add funds": the owner wraps ETH already sitting in the smart account into WETH, the asset the agent trades. Master-signed. */
+export async function prepareWrapEth(ctx: EngineContext, accountId: string, wei: bigint) {
+  const st = await loadAccountState(ctx, accountId);
+  const address = st.account.address as Address;
+  if (wei <= 0n) throw new Error("Enter an amount of ETH to wrap");
+  const balance = await ctx.publicClient.getBalance({ address });
+  if (wei > balance) throw new Error(`The account holds only ${formatEther(balance)} ETH`);
+  const calls: HexCall[] = [{ to: ctx.network.weth, value: wei, data: encodeFunctionData({ abi: parseAbi(["function deposit() payable"]), functionName: "deposit" }) }];
+  return storeForSignature(ctx, { accountId, purpose: "WRAP", owner: st.account.ownerAddress as Address, calls });
 }
 
 /**

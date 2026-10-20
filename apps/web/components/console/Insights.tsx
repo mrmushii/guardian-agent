@@ -2,6 +2,7 @@
 import { useMemo, useState } from "react";
 import s from "./insights.module.css";
 import { Icon } from "./icons";
+import { useSay } from "./detail";
 import type { Policy } from "./model";
 
 export type Point = { at: string; pct: number; kind: "measured" | "trade" };
@@ -9,7 +10,7 @@ export type Brief = { checks: number; trades: number; tradesByAgentAlone: number
 
 /** WETH-weight history: allowed band shaded, target dashed, measured line, trade markers, hover read-out. */
 export function AllocationChart({ points, policy, current, preview }: { points: Point[]; policy: Policy; current?: number | null; preview?: Pick<Policy, "ethMinPct" | "ethMaxPct" | "targetEthPct"> }) {
-  const [hover, setHover] = useState<number | null>(null);
+  const [hover, setHover] = useState<number | null>(null), say = useSay();
   const W = 720, H = 240, L = 36, R = 12, T = 12, B = 26;
   const data = useMemo(() => {
     const pts = [...points];
@@ -52,21 +53,22 @@ export function AllocationChart({ points, policy, current, preview }: { points: 
         <text x={L} y={H - 6} className={s.axis}>{new Date(t0).toLocaleDateString([], { month: "short", day: "numeric" })}</text>
         <text x={W - R} y={H - 6} textAnchor="end" className={s.axis}>now</text>
       </svg>
-      {hv && <div className={`glass ${s.tip}`} style={{ left: `${(x(hv.at) / W) * 100}%` }}><strong>{hv.pct.toFixed(1)}% WETH</strong><span>{hv.kind === "trade" ? "after a trade" : "measured"} · {new Date(hv.at).toLocaleString([], { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" })}</span></div>}
+      {hv && <div className={`glass ${s.tip}`} style={{ left: `${(x(hv.at) / W) * 100}%` }}><strong>{hv.pct.toFixed(1)}% {say("WETH")}</strong><span>{hv.kind === "trade" ? "after a trade" : "measured"} · {new Date(hv.at).toLocaleString([], { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" })}</span></div>}
       {data.length < 2 && <p className={s.emptyChart}>History builds up as the agent checks your portfolio.</p>}
-      <div className={s.legend}><span><i className={s.lgBand} />allowed range</span><span><i className={s.lgLine} />WETH share</span><span><i className={s.lgTrade} />trade</span></div>
+      <div className={s.legend}><span><i className={s.lgBand} />allowed range</span><span><i className={s.lgLine} />{say("WETH share")}</span><span><i className={s.lgTrade} />trade</span></div>
     </div>
   );
 }
 
 export function DailyBrief({ brief, loading }: { brief: Brief | null; loading: boolean }) {
+  const say = useSay();
   const kpi = (label: string, value: string | number, tone?: string) => <div className={s.kpi}><span>{label}</span><b className={tone}>{value}</b></div>;
   return (
     <section className={`glass ${s.brief}`} aria-label="Daily brief">
       <div className={s.briefHead}><span className={s.briefIcon}><Icon name="sparkle" size={16} /></span><h2>Last 24 hours</h2></div>
       {loading && !brief ? <div className={s.skeleton}><i /><i /><i /></div> : (
         <>
-          <p className={s.summary}>{brief?.summary ?? (brief && brief.checks === 0 ? "A quiet day: your portfolio stayed in range, so I didn't need to do anything." : brief ? `I checked your portfolio ${brief.checks} times and made ${brief.trades} trade${brief.trades === 1 ? "" : "s"}.` : "No data yet.")}</p>
+          <p className={s.summary}>{brief?.summary ? say(brief.summary) : (brief && brief.checks === 0 ? "A quiet day: your portfolio stayed in range, so I didn't need to do anything." : brief ? `I checked your portfolio ${brief.checks} times and made ${brief.trades} trade${brief.trades === 1 ? "" : "s"}.` : "No data yet.")}</p>
           {brief && <div className={s.kpis}>
             {kpi("Checks", brief.checks)}
             {kpi("Trades", brief.trades, brief.trades ? s.good : undefined)}

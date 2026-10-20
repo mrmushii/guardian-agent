@@ -19,6 +19,10 @@ export function Sidebar({ dash, mode, view, setView, onPause, busy, onPalette, u
   dash: Dash; mode: AgentMode; view: View; setView: (v: View) => void; onPause: () => void; busy: boolean; onPalette: () => void; unread: number;
 }) {
   const tasks = tasksOf(dash).length;
+  const [more, setMore] = useState(false);
+  // Phones get 4 main tabs plus "More"; six tabs were too cramped at 390px.
+  const MAIN = VIEWS.slice(0, 4), EXTRA = VIEWS.slice(4);
+  const go = (v: View) => { setMore(false); setView(v); };
   return (
     <>
       <nav className={`glass ${s.sidebar}`} aria-label="Main">
@@ -50,14 +54,25 @@ export function Sidebar({ dash, mode, view, setView, onPause, busy, onPalette, u
           </button>
         </div>
       </nav>
+      {more && <>
+        <div className={s.sheetScrim} onClick={() => setMore(false)} />
+        <div className={`glass ${s.sheet}`} role="menu" aria-label="More">
+          {EXTRA.map((v) => (
+            <button key={v.id} role="menuitem" className={`${s.sheetItem} ${view === v.id ? s.tabOn : ""}`} onClick={() => go(v.id)}><Icon name={v.icon} size={18} />{v.label}</button>
+          ))}
+        </div>
+      </>}
       <nav className={`glass ${s.tabbar}`} aria-label="Main (mobile)">
-        {VIEWS.map((v) => (
-          <button key={v.id} className={`${s.tabItem} ${view === v.id ? s.tabOn : ""}`} onClick={() => setView(v.id)} aria-label={v.label}>
+        {MAIN.map((v) => (
+          <button key={v.id} className={`${s.tabItem} ${view === v.id ? s.tabOn : ""}`} onClick={() => go(v.id)} aria-label={v.label}>
             <Icon name={v.icon} size={20} /><span>{v.label}</span>
             {v.id === "overview" && tasks > 0 && <i className={s.dotWarn} />}
             {v.id === "agent" && unread > 0 && <i className={s.dot} />}
           </button>
         ))}
+        <button className={`${s.tabItem} ${EXTRA.some((v) => v.id === view) || more ? s.tabOn : ""}`} onClick={() => setMore(!more)} aria-expanded={more} aria-label="More">
+          <Icon name="menu" size={20} /><span>More</span>
+        </button>
       </nav>
     </>
   );

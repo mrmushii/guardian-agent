@@ -22,6 +22,8 @@ export async function reconcile(ctx: EngineContext) {
 
     if (row.purpose === "REBALANCE" && row.actionId) { await finalizeRebalance(ctx, row.actionId, row.id, receipt); continue; }
     await recordReceipt(ctx, row.id, receipt);
+    if (row.purpose === "WRAP") await audit(receipt.success ? "FUNDS_WRAPPED" : "WRAP_FAILED", receipt.success ? "SUCCESS" : "FAILURE",
+      receipt.success ? "Owner wrapped ETH into WETH" : "Wrapping ETH failed", evidence);
     if (row.purpose === "AUTHORIZE" && row.sessionId) {
       // Multi-asset: one authorization installs every per-asset session prepared with it (older pending ones were abandoned).
       // A replacement authorization uninstalled the previous permissions in the same batch.

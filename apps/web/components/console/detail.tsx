@@ -32,6 +32,12 @@ export function More({ label = "Technical details", children }: { label?: string
   );
 }
 
+/** Simple view says "ETH": WETH is the tradable wrapper of ETH and the name confuses non-experts. Detailed view keeps WETH. */
+export function useSay() {
+  const { full } = useDetail();
+  return useCallback((text: string) => (full ? text : text.replace(/\bWETH\b/g, "ETH")), [full]);
+}
+
 /** On/off switch for the whole app. */
 export function DetailSwitch() {
   const { full, setFull } = useDetail();

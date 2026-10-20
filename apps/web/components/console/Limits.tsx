@@ -6,7 +6,7 @@ import { Icon } from "./icons";
 import { AllocationChart, type Point } from "./Insights";
 import { api, portfolioOf, type Policy } from "./model";
 import type { Ctl } from "./Hero";
-import { More } from "./detail";
+import { More, useSay } from "./detail";
 
 type WhatIf = { action: "NOTHING" | "AGENT" | "PARTIAL" | "ASK_OWNER" | "SIMULATED"; text: string; wethPct: number; usd?: number };
 const ACTION_LABEL: Record<WhatIf["action"], { label: string; tone: string }> = {
@@ -18,7 +18,7 @@ const ACTION_LABEL: Record<WhatIf["action"], { label: string; tone: string }> = 
 /** Full-page limits editor with a live "what would the agent do right now" preview. */
 export function LimitsEditor({ ctl, points }: { ctl: Ctl; points: Point[] }) {
   const { dash, run, busy } = ctl;
-  const policy = dash.policy!;
+  const policy = dash.policy!, say = useSay();
   const [p, setP] = useState<Policy>(policy);
   const [preview, setPreview] = useState<WhatIf | null>(null);
   const [previewErr, setPreviewErr] = useState<string | null>(null);
@@ -50,12 +50,12 @@ export function LimitsEditor({ ctl, points }: { ctl: Ctl; points: Point[] }) {
         <div className={s.panelHead}><h2>{policy.assets ? "Trading limits" : "Your rules for the agent"}</h2>{changed && <span className={`${s.chip} ${s.chipWarn}`}>unsaved</span>}</div>
         <div className={l.fields}>
           {!policy.assets && <><div className={l.field}>
-            <div className={l.label}><span>Allowed WETH range</span><b>{p.ethMinPct}% – {p.ethMaxPct}%</b></div>
+            <div className={l.label}><span>{say("Allowed WETH range")}</span><b>{p.ethMinPct}% – {p.ethMaxPct}%</b></div>
             <div className={l.dual}>
               <input type="range" min={1} max={99} value={p.ethMinPct} onChange={num("ethMinPct")} aria-label="Lower limit" />
               <input type="range" min={1} max={99} value={p.ethMaxPct} onChange={num("ethMaxPct")} aria-label="Upper limit" />
             </div>
-            <small>The agent only acts when WETH leaves this range.</small>
+            <small>{say("The agent only acts when WETH leaves this range.")}</small>
           </div>
           <div className={l.field}>
             <div className={l.label}><span>Target</span><b>{p.targetEthPct}%</b></div>
@@ -91,7 +91,7 @@ export function LimitsEditor({ ctl, points }: { ctl: Ctl; points: Point[] }) {
             </div>
           ) : <p className={s.empty}>{error ?? previewErr ?? "Calculating…"}</p>}
           <AllocationChart points={points} policy={policy} current={portfolioOf(dash)?.wethWeightPct ?? null} preview={changed ? p : undefined} />
-          {changed && <p className={s.fine}>Shaded amber: your proposed range. Blue line: actual WETH share.</p>}
+          {changed && <p className={s.fine}>Shaded amber: your proposed range. Blue line: actual {say("WETH")} share.</p>}
         </section>
       </div>
     </div>

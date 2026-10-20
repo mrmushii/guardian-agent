@@ -1,6 +1,7 @@
 "use client";
 import type { Hex } from "viem";
 import s from "./console.module.css";
+import { useSay } from "./detail";
 import { agentMode, api, headline, MODE_LABEL, multiOf, portfolioOf, tasksOf, type AgentMode, type Dash, type Task } from "./model";
 
 export function AgentOrb({ mode, large }: { mode: AgentMode; large?: boolean }) {
@@ -59,6 +60,7 @@ function MultiBars({ m }: { m: NonNullable<ReturnType<typeof multiOf>> }) {
 
 export function StatusHero({ dash }: { dash: Dash }) {
   const m = multiOf(dash);
+  const say = useSay();
   const p = portfolioOf(dash), pol = dash.policy, mode = agentMode(dash), h = headline(dash);
   const out = p && pol && (p.wethWeightPct < pol.ethMinPct || p.wethWeightPct > pol.ethMaxPct);
   return (
@@ -68,15 +70,15 @@ export function StatusHero({ dash }: { dash: Dash }) {
           <AgentOrb mode={mode} large />
           <div>
             <span className={`${s.modeTag} ${s[`mode_${mode}`]}`}>● {MODE_LABEL[mode]}</span>
-            <h1 className={s.heroTitle}>{h.title}</h1>
-            <p className={s.heroBody}>{h.body}</p>
+            <h1 className={s.heroTitle}>{say(h.title)}</h1>
+            <p className={s.heroBody}>{say(h.body)}</p>
           </div>
         </div>
         {m && <div className={s.stats}><div className={s.stat}><div className={s.statLabel}>Portfolio</div><div className={s.statValue}>${m.totalUsd}</div></div><div className={s.stat}><div className={s.statLabel}>Assets</div><div className={s.statValue}>{m.weights.length}</div></div><div className={s.stat}><div className={s.statLabel}>Band</div><div className={s.statValue}>±{m.driftPct} pts</div></div></div>}
         {p && !m && (
           <div className={s.stats}>
             <div className={s.stat}><div className={s.statLabel}>Portfolio</div><div className={s.statValue}>${Number(p.totalUsd).toFixed(2)}</div></div>
-            <div className={s.stat}><div className={s.statLabel}>WETH</div><div className={s.statValue}>${Number(p.wethUsd).toFixed(2)}</div></div>
+            <div className={s.stat}><div className={s.statLabel}>{say("WETH")}</div><div className={s.statValue}>${Number(p.wethUsd).toFixed(2)}</div></div>
             <div className={s.stat}><div className={s.statLabel}>USDC</div><div className={s.statValue}>${Number(p.usdcUsd).toFixed(2)}</div></div>
           </div>
         )}
@@ -87,7 +89,7 @@ export function StatusHero({ dash }: { dash: Dash }) {
           <div className={s.gaugeWrap}>
             <Gauge pct={p?.wethWeightPct ?? null} min={pol.ethMinPct} max={pol.ethMaxPct} target={pol.targetEthPct} />
             <div className={s.gaugeCenter}>
-              <div><div className={s.gaugePct} style={{ color: out ? "var(--bad)" : undefined }}>{p ? `${p.wethWeightPct.toFixed(1)}%` : "—"}</div><div className={s.gaugeCap}>of portfolio is WETH</div></div>
+              <div><div className={s.gaugePct} style={{ color: out ? "var(--bad)" : undefined }}>{p ? `${p.wethWeightPct.toFixed(1)}%` : "—"}</div><div className={s.gaugeCap}>{say("of portfolio is WETH")}</div></div>
             </div>
           </div>
           <div className={s.gaugeLegend}>
@@ -108,7 +110,7 @@ export type Ctl = {
 };
 
 export function YourTasks({ dash, busy, run, masterSign }: Ctl) {
-  const tasks = tasksOf(dash);
+  const tasks = tasksOf(dash), say = useSay();
   const authorize = () => run("authorize", async () => masterSign(await api("/api/authorize", {}), "Permission signed"));
   const button = (t: Task) => {
     switch (t.kind) {
@@ -132,9 +134,9 @@ export function YourTasks({ dash, busy, run, masterSign }: Ctl) {
         <div className={s.allSet}><span className={s.check}>✓</span><div><strong>You're all set.</strong><div className="muted">Guardian handles moves up to ${dash.policy?.maxAutoTxUsd ?? 10} on its own. Anything bigger will show up here for your signature.</div></div></div>
       ) : tasks.map((t, i) => (
         <div key={i} className={s.task} aria-label={t.kind === "approve" ? "Waiting for your approval" : undefined}>
-          <div className={s.taskTitle}>{t.kind === "confirming" ? "⏳" : "✋"} {t.title}</div>
-          <p className={s.taskDetail}>{t.detail}</p>
-          {t.action?.decision?.reason && <p className={s.taskDetail}><em>Agent: “{t.action.decision.reason}”</em></p>}
+          <div className={s.taskTitle}>{t.kind === "confirming" ? "⏳" : "✋"} {say(t.title)}</div>
+          <p className={s.taskDetail}>{say(t.detail)}</p>
+          {t.action?.decision?.reason && <p className={s.taskDetail}><em>Agent: “{say(t.action.decision.reason)}”</em></p>}
           <div className={s.row}>{button(t)}</div>
         </div>
       ))}

@@ -5,6 +5,7 @@ import p from "./portfolio.module.css";
 import { Icon } from "./icons";
 import { api, short } from "./model";
 import type { Ctl } from "./Hero";
+import { AddFunds } from "./AddFunds";
 
 type Check = { id: string; ok: boolean; detail: string };
 export type Holding = {
@@ -54,6 +55,7 @@ export function PortfolioView({ ctl }: { ctl: Ctl }) {
   const [err, setErr] = useState<string | null>(null);
   const [open, setOpen] = useState<Holding | null>(null);
   const [adding, setAdding] = useState(false);
+  const [funding, setFunding] = useState(false);
   const load = useCallback(async (fresh = false) => {
     try { setData(await api<Holdings>(`/api/assets${fresh ? "?fresh" : ""}`)); setErr(null); } catch (e) { setErr((e as Error).message); }
   }, []);
@@ -79,7 +81,8 @@ export function PortfolioView({ ctl }: { ctl: Ctl }) {
           </div>
           <p className={s.fine}>“Tradable” assets can be bought and sold here. “Simulated” ones have a live price but can't be traded on this test network.</p>
           <div className={s.row} style={{ marginTop: 12 }}>
-            <button className="primary" onClick={() => setAdding(true)}><Icon name="up" size={15} /> Add token</button>
+            <button className="primary" onClick={() => setFunding(true)}><Icon name="wallet" size={15} /> Add funds</button>
+            <button onClick={() => setAdding(true)}><Icon name="up" size={15} /> Add token</button>
             <button disabled={!!busy} onClick={() => run("verify", async () => { await load(true); return "Re-verified every asset on-chain"; })}><Icon name="check" size={15} /> Re-verify</button>
           </div>
         </section>
@@ -111,6 +114,7 @@ export function PortfolioView({ ctl }: { ctl: Ctl }) {
       {open && <AssetDrawer a={open} onClose={() => setOpen(null)} onRemove={open.custom && open.token ? () => run("remove", async () => {
         await api("/api/assets", { remove: open.token }); setOpen(null); await load(); return `Removed ${open.symbol}`;
       }) : undefined} />}
+      {funding && <AddFunds ctl={ctl} onClose={() => setFunding(false)} onChanged={() => void load()} />}
       {adding && <AddToken onClose={() => setAdding(false)} onAdded={async () => { setAdding(false); await load(); }} />}
     </>
   );

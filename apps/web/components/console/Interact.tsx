@@ -1,10 +1,12 @@
 "use client";
 import s from "./console.module.css";
 import { api, portfolioOf } from "./model";
+import { useSay } from "./detail";
 import type { Ctl } from "./Hero";
 
 /** Testnet only: the demo wallet moves funds into the account so the owner can watch the agent react. */
 export function SimulatePanel({ dash, busy, run }: Ctl) {
+  const say = useSay();
   if (!dash.network.isTestnet || !dash.demo.enabled) return null;
   const p = portfolioOf(dash), cap = dash.policy?.maxAutoTxUsd ?? 10, b = dash.demo.walletB;
   const expect = (usd: number, up: boolean) => {
@@ -12,7 +14,7 @@ export function SimulatePanel({ dash, busy, run }: Ctl) {
     const total = Number(p.totalUsd), w = Number(p.wethUsd) + (up ? usd : 0);
     const pct = (w / (total + usd)) * 100;
     const outside = dash.policy && (pct > dash.policy.ethMaxPct || pct < dash.policy.ethMinPct);
-    return `→ ≈ ${pct.toFixed(0)}% WETH${outside ? (usd > cap ? " · bigger than your cap" : " · agent rebalances") : " · stays in range"}`;
+    return `→ ≈ ${pct.toFixed(0)}% ${say("WETH")}${outside ? (usd > cap ? " · bigger than your cap" : " · agent rebalances") : " · stays in range"}`;
   };
   const go = (direction: "up" | "down", usd: number) => run(`sim-${direction}-${usd}`, async () => {
     const r = await api<{ how: string }>("/api/simulate", { direction, usd });
@@ -25,7 +27,7 @@ export function SimulatePanel({ dash, busy, run }: Ctl) {
   });
   const btn = (direction: "up" | "down", usd: number, label: string) => (
     <button className={s.simBtn} disabled={!!busy} onClick={() => go(direction, usd)}>
-      <strong>{busy === `sim-${direction}-${usd}` ? "Sending…" : label}</strong>
+      <strong>{busy === `sim-${direction}-${usd}` ? "Sending…" : say(label)}</strong>
       <small>{expect(usd, direction === "up")}</small>
     </button>
   );

@@ -7,7 +7,7 @@ import s from "./console/console.module.css";
 import sh from "./console/shell.module.css";
 import { agentMode, api, short, type Dash, type Ev } from "./console/model";
 import { AgentOrb, StatusHero, YourTasks, type Ctl } from "./console/Hero";
-import { AgentThinking } from "./console/Thinking";
+import { AgentThinking, LiveStrip } from "./console/Thinking";
 import { Guardrails } from "./console/Guardrails";
 import { SimulatePanel } from "./console/Interact";
 import { SecurityCenter } from "./console/Security";
@@ -20,7 +20,8 @@ import { LimitsEditor } from "./console/Limits";
 import { Icon } from "./console/icons";
 import { PortfolioView } from "./console/Portfolio";
 import { TargetEditor } from "./console/Targets";
-import { DetailProvider, DetailSwitch, More, useDetail } from "./console/detail";
+import { NotifySwitch, useTaskAlerts } from "./console/notify";
+import { DetailProvider, DetailSwitch, More, useDetail, useSay } from "./console/detail";
 
 type Theme = "dark" | "light" | null;
 const THEME_KEY = "guardian.theme";
@@ -32,7 +33,7 @@ export default function Dashboard() {
 }
 
 function Console() {
-  const detail = useDetail();
+  const detail = useDetail(), say = useSay();
   const [dash, setDash] = useState<Dash | null>(null);
   const [events, setEvents] = useState<Ev[]>([]);
   const [needsLogin, setNeedsLogin] = useState(false);
@@ -50,6 +51,7 @@ function Console() {
   const live = useRef(false);
   const viewRef = useRef<View>("overview");
   const capRef = useRef(10);
+  useTaskAlerts(dash);
 
   const setView = useCallback((v: View) => { setViewState(v); viewRef.current = v; if (location.hash.slice(1) !== v) history.replaceState(null, "", `#${v}`); }, []);
   useEffect(() => { const v = viewFromHash(); setViewState(v); viewRef.current = v; const on = () => setView(viewFromHash()); addEventListener("hashchange", on); return () => removeEventListener("hashchange", on); }, [setView]);
@@ -193,8 +195,8 @@ function Console() {
       { id: "help", label: "How Guardian works", icon: "help", run: () => setHelp(true), keywords: "onboarding guide" },
     ];
     if (dash.network.isTestnet && dash.demo.enabled) c.push(
-      { id: "sim-up", label: "Simulate: WETH up $5", hint: "testnet", icon: "up", run: () => void simulate("up", 5), keywords: "demo market move" },
-      { id: "sim-down", label: "Simulate: WETH down $5", hint: "testnet", icon: "down", run: () => void simulate("down", 5), keywords: "demo market move" },
+      { id: "sim-up", label: say("Simulate: WETH up $5"), hint: "testnet", icon: "up", run: () => void simulate("up", 5), keywords: "demo market move" },
+      { id: "sim-down", label: say("Simulate: WETH down $5"), hint: "testnet", icon: "down", run: () => void simulate("down", 5), keywords: "demo market move" },
     );
     return c;
   }, [dash, toggleTheme, detail.full]); // eslint-disable-line react-hooks/exhaustive-deps
@@ -204,10 +206,10 @@ function Console() {
       <section className={s.pitch}>
         <div className={s.brandRow}><AgentOrb mode="watching" /><span>Guardian</span></div>
         <h1>Set your ETH mix once.<br /><span className={s.pitchAccent}>Guardian keeps it there.</span></h1>
-        <p className={s.pitchSub}>When the price moves, Guardian swaps between WETH and USDC to bring you back to your target. Small trades happen on their own. Bigger ones wait for you.</p>
+        <p className={s.pitchSub}>When the price moves, Guardian swaps between ETH and USDC to bring you back to your target. Small trades happen on their own. Bigger ones wait for you.</p>
         <div className={`glass ${s.mixDemo}`} aria-hidden="true">
           <div className={s.mixHead}><span>Your mix</span><small>example</small></div>
-          <div className={s.mixBar}><b style={{ width: "67%" }}>WETH 67%</b><i>USDC 33%</i><u style={{ left: "67%" }} /></div>
+          <div className={s.mixBar}><b style={{ width: "67%" }}>ETH 67%</b><i>USDC 33%</i><u style={{ left: "67%" }} /></div>
           <div className={s.mixFoot}><span>Allowed 63–71%</span><span className={s.mixOk}><Icon name="check" size={13} /> In range</span></div>
         </div>
         <ul className={s.facts}>
@@ -244,25 +246,46 @@ function Console() {
         </div>}
         {notice && <p className={`glass ${s.toast} ${notice.kind === "err" ? s.toastErr : s.toastOk}`} role="status">{notice.text}</p>}
 
-        {view === "overview" && <>
-          <StatusHero dash={dash} />
-          <div className={s.grid}>
-            <div className={s.col}>
-              <YourTasks {...ctl} />
-              <AgentThinking dash={dash} events={events} />
-            </div>
-            <div className={s.col}>
-              <DailyBrief brief={insights?.brief ?? null} loading={!insights} />
-              <Guardrails {...ctl} onEdit={() => setView("limits")} />
-            </div>
-          </div>
-          {dash.policy && (
+        {view === "overview" && (() => {
+          const chart = dash.policy && (
             <section className={`glass ${s.panel}`} aria-label="Allocation history">
-              <div className={s.panelHead}><h2>WETH share · last 7 days</h2><button className="ghost" onClick={() => setView("activity")}>See activity <Icon name="chevron" size={14} /></button></div>
+              <div className={s.panelHead}><h2>{say("WETH share")} · last 7 days</h2><button className="ghost" onClick={() => setView("activity")}>See activity <Icon name="chevron" size={14} /></button></div>
               <AllocationChart points={insights?.history ?? []} policy={dash.policy} current={"error" in dash.portfolio ? null : dash.portfolio.wethWeightPct} />
             </section>
-          )}
-        </>}
+          );
+          // Simple view answers three questions: am I OK (hero + live status), does anything need me (tasks), what happened (brief).
+          if (!detail.full) return <>
+            <StatusHero dash={dash} />
+            <div className={s.grid}>
+              <div className={s.col}>
+                <YourTasks {...ctl} />
+                <section className={`glass ${s.panel}`} aria-label="Live status"><LiveStrip dash={dash} /></section>
+              </div>
+              <div className={s.col}><DailyBrief brief={insights?.brief ?? null} loading={!insights} /></div>
+            </div>
+            <More label="More details: what the agent is thinking, its limits and the 7-day chart">
+              <div className={s.grid}>
+                <div className={s.col}><AgentThinking dash={dash} events={events} /></div>
+                <div className={s.col}><Guardrails {...ctl} onEdit={() => setView("limits")} /></div>
+              </div>
+              <div style={{ marginTop: 18 }}>{chart}</div>
+            </More>
+          </>;
+          return <>
+            <StatusHero dash={dash} />
+            <div className={s.grid}>
+              <div className={s.col}>
+                <YourTasks {...ctl} />
+                <AgentThinking dash={dash} events={events} />
+              </div>
+              <div className={s.col}>
+                <DailyBrief brief={insights?.brief ?? null} loading={!insights} />
+                <Guardrails {...ctl} onEdit={() => setView("limits")} />
+              </div>
+            </div>
+            {chart}
+          </>;
+        })()}
 
         {view === "portfolio" && <>
           {head("Portfolio", "What you hold and what it's worth right now.")}
@@ -301,6 +324,8 @@ function Console() {
               <section className={`glass ${s.panel}`} aria-label="Appearance">
                 <div className={s.panelHead}><h2>Display & help</h2></div>
                 <DetailSwitch />
+                <div style={{ height: 14 }} />
+                <NotifySwitch />
                 <div style={{ height: 14 }} />
                 <div className={s.row}>
                   <button onClick={toggleTheme}><Icon name="sun" size={16} /> Toggle theme</button>

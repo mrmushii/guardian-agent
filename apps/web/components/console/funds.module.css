@@ -1,0 +1,17 @@
+/* ---------- Add funds drawer ---------- */
+.step { display: flex; gap: 14px; align-items: flex-start; }
+.num { flex: none; width: 28px; height: 28px; display: grid; place-items: center; border-radius: 50%; font-weight: 750; font-size: 0.85rem; color: #fff; background: var(--accent-gradient); box-shadow: var(--glow-accent); }
+.body { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 10px; }
+.body h3 { margin: 3px 0 0; font-size: 1rem; }
+.body p { margin: 0; }
+.qrWrap { align-self: flex-start; padding: 10px; border-radius: var(--radius-md); background: #fff; box-shadow: var(--shadow); }
+.qr, .qrSkel { display: block; width: 168px; height: 168px; border-radius: 6px; }
+.qrSkel { background: linear-gradient(90deg, #eef1f8, #f8f9fc, #eef1f8); }
+.addr { display: flex; align-items: center; gap: 8px; padding: 6px 6px 6px 12px; border-radius: var(--radius-sm); background: var(--glass-strong); border: 1px solid var(--line); }
+.addr code { flex: 1; min-width: 0; font-size: 0.76rem; overflow-wrap: anywhere; }
+.addr button { display: inline-flex; align-items: center; gap: 4px; flex: none; padding: 6px 10px; font-size: 0.8rem; }
+.faucets { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 12px; font-size: 0.82rem; color: var(--ink-3); }
+.faucets a { display: inline-flex; align-items: center; gap: 4px; font-weight: 600; }
+.balance { display: flex; justify-content: space-between; padding: 10px 12px; border-radius: var(--radius-sm); background: var(--glass-strong); font-size: 0.88rem; }
+.wrapRow { display: flex; gap: 8px; align-items: center; }
+.wrapRow button { flex: none; }

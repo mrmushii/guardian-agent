@@ -5,6 +5,7 @@ import { Icon } from "./icons";
 import { AgentOrb, YourTasks, type Ctl } from "./Hero";
 import { agentMode, api, portfolioOf, tasksOf, time, type Ev } from "./model";
 import type { View } from "./Shell";
+import { useSay } from "./detail";
 
 export type Msg = {
   id: string; role: "owner" | "agent"; text: string; at: string;
@@ -45,6 +46,7 @@ function Typewriter({ text, animate }: { text: string; animate?: boolean }) {
 }
 
 export function AgentChat({ ctl, proactive, setView, onSeen, initialAsk, onInitialAsk }: { ctl: Ctl; proactive: Msg[]; setView: (v: View) => void; onSeen: () => void; initialAsk?: string | null; onInitialAsk?: () => void }) {
+  const say = useSay();
   const { dash, busy, run } = ctl;
   const [msgs, setMsgs] = useState<Msg[]>([]);
   const [text, setText] = useState("");
@@ -90,7 +92,7 @@ export function AgentChat({ ctl, proactive, setView, onSeen, initialAsk, onIniti
         <AgentOrb mode={mode} />
         <div className={s.headText}>
           <strong>Guardian</strong>
-          <span>{dash.agent.models[0] ? `AI · ${dash.agent.models[0]}` : "AI not configured"}{p ? ` · WETH ${p.wethWeightPct.toFixed(1)}%` : ""}</span>
+          <span>{dash.agent.models[0] ? `AI · ${dash.agent.models[0]}` : "AI not configured"}{p ? ` · ${say("WETH")} ${p.wethWeightPct.toFixed(1)}%` : ""}</span>
         </div>
         <span className={s.safe}><Icon name="limits" size={14} /> Read-only chat</span>
       </header>
@@ -101,7 +103,7 @@ export function AgentChat({ ctl, proactive, setView, onSeen, initialAsk, onIniti
           <div className={s.welcome}>
             <AgentOrb mode={mode} large />
             <h2>Hi, I'm your Guardian agent.</h2>
-            <p>I keep your WETH/USDC mix between {dash.policy?.ethMinPct}% and {dash.policy?.ethMaxPct}%. Ask me anything about your portfolio, my decisions, or your limits.</p>
+            <p>I keep your {say("WETH")}/USDC mix between {dash.policy?.ethMinPct}% and {dash.policy?.ethMaxPct}%. Ask me anything about your portfolio, my decisions, or your limits.</p>
             <div className={s.starters}>{STARTERS.map((q) => <button key={q} onClick={() => void ask(q)}><Icon name="sparkle" size={14} />{q}</button>)}</div>
           </div>
         )}
@@ -110,7 +112,7 @@ export function AgentChat({ ctl, proactive, setView, onSeen, initialAsk, onIniti
             {m.role === "agent" && <span className={s.avatar}><Icon name="agent" size={15} /></span>}
             <div className={`${s.bubble} ${m.role === "owner" ? s.me : s.agent} ${m.proactive ? s.proactive : ""} ${m.error ? s.err : ""}`}>
               {m.proactive && <span className={s.tag}><Icon name="bolt" size={12} /> Update</span>}
-              <p><Typewriter text={m.text} animate={m.animate} /></p>
+              <p><Typewriter text={say(m.text)} animate={m.animate} /></p>
               {m.link && <a href={m.link} target="_blank" rel="noreferrer" className={s.link}><Icon name="external" size={13} /> View transaction</a>}
               {m.intent && INTENT_BUTTON[m.intent] && (
                 <button className={s.intent} disabled={!!busy} onClick={() => doIntent(m.intent!)}><Icon name={INTENT_BUTTON[m.intent].icon} size={14} />{INTENT_BUTTON[m.intent].label}</button>

@@ -2,7 +2,7 @@
 import { useEffect, useState } from "react";
 import s from "./console.module.css";
 import t from "./thinking.module.css";
-import { More, useDetail } from "./detail";
+import { More, useDetail, useSay } from "./detail";
 import { ago, explain, humanize, short, STEPS, time, type Check, type Dash, type Ev } from "./model";
 
 const ACTIVE = ["TRIGGERED", "PLANNING", "SIMULATING", "SUBMITTING", "PENDING", "REVALIDATING", "PENDING_APPROVAL", "MASTER_SIGNING"];
@@ -31,8 +31,8 @@ export function Evidence({ e }: { e: Ev }) {
 }
 
 /** What the worker is doing right now: last check, block, next check, and recent checks. */
-function LiveStrip({ dash }: { dash: Dash }) {
-  const now = useNow();
+export function LiveStrip({ dash }: { dash: Dash }) {
+  const now = useNow(), say = useSay();
   const w = dash.watch, c = w.lastCheck;
   const beat = w.heartbeatAt ? new Date(w.heartbeatAt).getTime() : 0;
   const online = beat > 0 && now - beat < 45_000;
@@ -50,7 +50,7 @@ function LiveStrip({ dash }: { dash: Dash }) {
       <i className={busy ? t.dotBusy : t.dotLive} />
       <div className={t.liveBody}>
         <b>{busy ? "Deciding now…" : "Watching"} <small>· checked {secs(now - beat)} ago<span className="tech">{w.lastBlock ? ` at block ${Number(w.lastBlock).toLocaleString()}` : ""}</span>{!busy && next > 0 ? ` · next check in ${secs(next)}` : ""}</small></b>
-        {c && <span>{c.summary}</span>}
+        {c && <span>{say(c.summary)}</span>}
         {c?.recent && c.recent.length > 1 && (
           <details className={t.recent}>
             <summary>Recent checks ({c.recent.length})</summary>
@@ -110,7 +110,7 @@ export function AiThoughts({ data }: { data: Record<string, unknown> | null }) {
 /** Live status on top; then the current (or last) decision as the agent's train of thought. */
 export function AgentThinking({ dash, events }: { dash: Dash; events: Ev[] }) {
   const now = useNow();
-  const { full } = useDetail();
+  const { full } = useDetail(), say = useSay();
   const latest = dash.actions[0];
   const steps = latest ? events.filter((e) => e.actionId === latest.id).reverse() : [];
   const reached = Math.max(-1, ...steps.map((e) => STEPS.findIndex((st) => st.id === explain(e.type).step)));
@@ -132,7 +132,7 @@ export function AgentThinking({ dash, events }: { dash: Dash; events: Ev[] }) {
             <span className={s.feedIcon} aria-hidden="true">{x.icon}</span>
             <div>
               <div className={s.feedTitle}>{x.title}<time dateTime={e.createdAt}>{time(e.createdAt)}</time></div>
-              <p className={s.feedMsg}>{e.message}</p>
+              <p className={s.feedMsg}>{say(e.message)}</p>
               {x.why && <p className={s.feedWhy}>{x.why}</p>}
               {e.type === "AI_DECISION" && <AiThoughts data={e.data} />}
               <Evidence e={e} />
@@ -165,13 +165,13 @@ export function AgentThinking({ dash, events }: { dash: Dash; events: Ev[] }) {
           </div>
           <div className={s.summary}>
             <span className={`${s.chip} ${latest.state === "CONFIRMED" ? s.chipGood : failed ? s.chipBad : latest.state === "NO_ACTION" || latest.state === "CANCELLED" ? "" : s.chipAccent}`}>{latest.tier === "SIMULATED" && latest.state === "CONFIRMED" ? "Simulated step recorded" : latest.state === "CANCELLED" ? "Cancelled · nothing was traded" : explain(latest.state).title}</span>
-            {latest.plan?.direction && <span className={s.chip}>{/^BUY/.test(latest.plan.direction) ? "Buy" : "Sell"} {(latest.plan as { asset?: string }).asset ?? "WETH"}{usd ? ` · ≈ ${usd}` : ""}</span>}
+            {latest.plan?.direction && <span className={s.chip}>{/^BUY/.test(latest.plan.direction) ? "Buy" : "Sell"} {say((latest.plan as { asset?: string }).asset ?? "WETH")}{usd ? ` · ≈ ${usd}` : ""}</span>}
             {latest.tier && <span className={`${s.chip} tech`}>{TIER[latest.tier] ?? latest.tier}</span>}
             {risk && <span className={`${s.chip} ${risk[2] === "LOW" ? s.chipGood : risk[2] === "HIGH" ? s.chipBad : s.chipWarn}`}>Risk {risk[1]} · {risk[2]!.toLowerCase()}</span>}
             {provider && <span className={`${s.chip} ${provider === "deterministic-fallback" ? s.chipWarn : "tech"}`}>{provider === "deterministic-fallback" ? "Safe rule (AI offline)" : `AI · ${provider}`}</span>}
           </div>
           {latest.decision && (
-            <div className={s.quote}>“{latest.decision.reason}”<small>{latest.decision.decision === "REBALANCE" ? "Decided to rebalance" : humanize(latest.decision.decision)}<span className="tech"> · the AI chooses what to do; code computes every amount and the account enforces your limits.</span></small>
+            <div className={s.quote}>“{say(latest.decision.reason)}”<small>{latest.decision.decision === "REBALANCE" ? "Decided to rebalance" : humanize(latest.decision.decision)}<span className="tech"> · the AI chooses what to do; code computes every amount and the account enforces your limits.</span></small>
               {decision && <AiThoughts data={decision.data} />}
             </div>
           )}

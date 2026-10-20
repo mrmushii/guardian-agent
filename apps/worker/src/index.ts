@@ -5,6 +5,7 @@ import pino from "pino";
 import { appendAudit, inCooldown, policies, smartAccounts, watcherCheckpoints } from "@guardian/db";
 import { createEngineContext, describeAllocation, housekeeping, loadAccountState, multiPortfolio, readPortfolio, reconcile, runRebalance, fmtBps } from "@guardian/engine";
 import { portfolioTargets } from "@guardian/policy";
+import { notifyOwner, telegramEnabled } from "./notify.js";
 
 const log = pino({ name: "guardian-worker", redact: ["*.apiKey", "*.privateKey", "*.encryptedKey"] });
 const ctx = createEngineContext();
@@ -55,14 +56,14 @@ async function evaluate(accountId: string, trigger: { key: string; kind: string;
     if (portfolioTargets(st.policy).multi) {
       const [mp, b] = await Promise.all([multiPortfolio(ctx, accountId, account, st.policy), ctx.publicClient.getBlockNumber()]);
       block = b; inBand = !mp.assessment.drifted;
-      summary = `${describeAllocation(mp)}${inBand ? " — all within band" : ""}`;
+      summary = `${describeAllocation(mp)}${inBand ? " — all within range" : ""}`;
       const worst = [...mp.assessment.weights].sort((x, y) => Math.abs(y.driftPct) - Math.abs(x.driftPct))[0]!;
       detail = trigger.detail ?? `${worst.symbol} at ${worst.pct.toFixed(1)}% vs target ${worst.targetPct}% (outside ±${mp.driftPct} pts)`;
     } else {
       const snap = await readPortfolio(ctx, account, st.policy);
       const weight = fmtBps(snap.assessment.valuation.wethWeightBps);
       block = snap.blockNumber; inBand = snap.assessment.kind === "WITHIN_BAND";
-      summary = `WETH ${weight}% (band ${st.policy.ethMinPct}–${st.policy.ethMaxPct}%)${inBand ? " — within band" : ""}`;
+      summary = `WETH ${weight}% (range ${st.policy.ethMinPct}–${st.policy.ethMaxPct}%)${inBand ? " — within range" : ""}`;
       detail = trigger.detail ?? (snap.assessment.kind === "SELL_WETH"
         ? `WETH weight ${weight}% above maximum ${st.policy.ethMaxPct}%` : `WETH weight ${weight}% below minimum ${st.policy.ethMinPct}%`);
     }
@@ -72,6 +73,9 @@ async function evaluate(accountId: string, trigger: { key: string; kind: string;
     const res = await runRebalance(ctx, accountId, { key: trigger.key, kind: trigger.kind, detail, block });
     await recordCheck(accountId, block, "out_of_band", `${summary} — ${"state" in res ? `action ${String(res.state).toLowerCase().replaceAll("_", " ")}` : `skipped (${String(res.skipped).toLowerCase().replaceAll("_", " ")})`}`);
     log.info({ accountId, trigger: trigger.key, res }, "rebalance evaluated");
+    if ("state" in res && res.state === "PENDING_APPROVAL")
+      await notifyOwner(`Guardian needs your OK: ${detail}. This trade is bigger than the agent may make alone. Approve or decline within 30 minutes.`)
+        .catch((e) => log.warn({ err: (e as Error).message }, "owner notification failed"));
   } catch (e) {
     // Drizzle wraps driver errors ("Failed query: …"); the cause holds the real reason (e.g. connection limit).
     const err = e as Error & { cause?: { message?: string } };
@@ -110,7 +114,7 @@ function watchTransfers(accounts: { id: string; address: string }[]) {
 }
 
 async function main() {
-  log.info({ chainId: ctx.chain.id, models: ctx.models.map((m) => m.name) }, "worker starting");
+  log.info({ chainId: ctx.chain.id, models: ctx.models.map((m) => m.name), telegram: telegramEnabled }, "worker starting");
   await reconcile(ctx); // recover in-flight operations before accepting new work
   let unwatch = watchTransfers(await monitoredAccounts());
   let lastAccounts = "";
