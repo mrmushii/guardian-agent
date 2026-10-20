@@ -165,6 +165,7 @@ export const EXPLAIN: Record<string, Explain> = {
   SESSION_REAUTH_REQUIRED: { icon: "⚿", title: "Agent needs a new permission" },
   AGENT_AUTHORIZED: { icon: "⚿", title: "Agent authorized" },
   AGENT_REVOKED: { icon: "⚿", title: "Agent revoked" },
+  PAPER_CLOSED: { icon: "↺", title: "Simulated position closed", why: "An asset you removed from your targets was sold back at the current price." },
   FUNDS_WRAPPED: { icon: "＋", title: "Funds added", why: "You turned plain ETH into tradable ETH (WETH)." },
   WRAP_FAILED: { icon: "✕", title: "Adding funds failed" },
   AUTHORIZATION_PREPARED: { icon: "✎", title: "Authorization ready to sign" },

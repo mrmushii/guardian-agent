@@ -72,3 +72,30 @@ export async function paperFill(ctx: EngineContext, accountId: string, rows: Mul
   await setPaper(ctx, accountId, HUB, committed - usdcRaw);
   return { filledCents: cents, qtyRaw: qty, reason: null };
 }
+
+/**
+ * Closes simulated positions in assets the owner no longer targets: each is sold back at the oracle price and the USDC
+ * it had committed is released. Without this, a removed asset kept its paper value and skewed every weight.
+ */
+export async function unwindPaper(ctx: EngineContext, accountId: string, account: Address, policy: HumanPolicy) {
+  const keep = new Set(portfolioTargets(policy).assets.map((a) => a.symbol));
+  const book = await paperBook(ctx, accountId);
+  const stale = [...book].filter(([sym, qty]) => sym !== HUB && qty !== 0n && !keep.has(sym));
+  if (!stale.length) return [];
+  const h = await holdings(ctx, accountId, account);
+  const usdc = h.assets.find((a) => a.symbol === HUB);
+  let committed = book.get(HUB) ?? 0n;
+  const closed: { symbol: string; usd: string }[] = [];
+  for (const [sym, qty] of stale) {
+    const a = h.assets.find((x) => x.symbol === sym);
+    // Without a price there is no fair exit value: release the position at zero rather than invent one.
+    const cents = a?.priceUsd != null ? toCents(qty, a.decimals, a.priceUsd) : 0n;
+    const usdcRaw = usdc?.priceUsd != null ? fromCents(cents, usdc.decimals, usdc.priceUsd) : 0n;
+    await setPaper(ctx, accountId, sym, 0n);
+    committed -= usdcRaw;
+    closed.push({ symbol: sym, usd: (Number(cents) / 100).toFixed(2) });
+  }
+  // Negative means the simulation closed at a gain; paperBook already treats that as extra USDC.
+  await setPaper(ctx, accountId, HUB, committed);
+  return closed;
+}

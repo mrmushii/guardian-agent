@@ -7,6 +7,7 @@ import { createMasterAccount, createSponsoredClient } from "@guardian/account";
 import { readReferencePrices } from "@guardian/oracle";
 import type { EngineContext } from "./context.js";
 import { loadAccountState } from "./state.js";
+import { unwindPaper } from "./multi.js";
 import { explorerTx } from "./userops.js";
 
 const quoterAbi = parseAbi(["function quoteExactInputSingle((address tokenIn,address tokenOut,uint256 amountIn,uint24 fee,uint160 sqrtPriceLimitX96)) returns (uint256,uint160,uint32,uint256)"]);
@@ -101,5 +102,8 @@ export async function publishPolicy(ctx: EngineContext, accountId: string, patch
     await tx.insert(policies).values({ accountId, version, policy: next, active: true });
   });
   await appendAudit(ctx.db, { accountId, type: "POLICY_UPDATED", level: "INFO", message: `Owner published policy v${version}`, data: next });
+  const closed = await unwindPaper(ctx, accountId, st.account.address as Address, next);
+  if (closed.length) await appendAudit(ctx.db, { accountId, type: "PAPER_CLOSED", level: "INFO",
+    message: `Closed simulated ${closed.map((c) => `${c.symbol} ($${c.usd})`).join(", ")}: no longer in your targets`, data: closed });
   return { version, policy: next };
 }
