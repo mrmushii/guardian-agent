@@ -36,7 +36,7 @@ export async function walletBBalances(ctx: EngineContext) {
 
 /**
  * Simulated market move for demos (testnet only): Wallet B pushes the Guardian account's WETH weight
- * up (sends WETH) or down (sends USDC; if it has too little USDC it swaps its WETH to USDC straight into the account).
+ * up (sends WETH, or buys WETH with its USDC) or down (sends USDC, or swaps its WETH to USDC), always straight into the account.
  */
 export async function simulateMove(ctx: EngineContext, accountId: string, guardian: Address, direction: "up" | "down", usd: number) {
   const signer = demoWallet(ctx);
@@ -50,17 +50,38 @@ export async function simulateMove(ctx: EngineContext, accountId: string, guardi
   const n = ctx.network;
   let calls: { to: Address; value: bigint; data: Hex }[];
   let how: string;
+  const empty = (need: string) => new Error(`The demo wallet is out of test funds (needs ${need}). Send it free USDC from faucet.circle.com (Base Sepolia) at ${b.address}`);
   if (direction === "up") {
-    if ((await bal(n.weth)) < wei) throw new Error(`Demo wallet has too little WETH for $${usd}`);
-    calls = [{ to: n.weth, value: 0n, data: encodeFunctionData({ abi: erc20Abi, functionName: "transfer", args: [guardian, wei] }) }];
-    how = `sent $${usd} of WETH`;
+    if ((await bal(n.weth)) >= wei) {
+      calls = [{ to: n.weth, value: 0n, data: encodeFunctionData({ abi: erc20Abi, functionName: "transfer", args: [guardian, wei] }) }];
+      how = `sent $${usd} of WETH`;
+    } else {
+      // Mirror of "down": buy WETH with the demo wallet's USDC, delivered straight into the account.
+      const raw = cents * 10_000n;
+      if ((await bal(n.usdc)) < raw) throw empty(`$${usd} of WETH or USDC`);
+      let best = { fee: 0, out: 0n };
+      for (const fee of [500, 3000]) {
+        try {
+          const q = await ctx.publicClient.simulateContract({ address: n.quoterV2, abi: quoterAbi, functionName: "quoteExactInputSingle",
+            args: [{ tokenIn: n.usdc, tokenOut: n.weth, amountIn: raw, fee, sqrtPriceLimitX96: 0n }] });
+          if (q.result[0] > best.out) best = { fee, out: q.result[0] };
+        } catch { /* pool unusable for this size */ }
+      }
+      if (!best.out) throw new Error("No usable USDC→WETH pool for the demo swap");
+      calls = [
+        { to: n.usdc, value: 0n, data: encodeFunctionData({ abi: erc20Abi, functionName: "approve", args: [n.swapRouter02, raw] }) },
+        { to: n.swapRouter02, value: 0n, data: encodeFunctionData({ abi: routerAbi, functionName: "exactInputSingle", args: [{ tokenIn: n.usdc, tokenOut: n.weth, fee: best.fee,
+          recipient: guardian, amountIn: raw, amountOutMinimum: (best.out * 99n) / 100n, sqrtPriceLimitX96: 0n }] }) },
+      ];
+      how = `bought WETH with $${usd} of its USDC for your account`;
+    }
   } else {
     const raw = cents * 10_000n;
     if ((await bal(n.usdc)) >= raw) {
       calls = [{ to: n.usdc, value: 0n, data: encodeFunctionData({ abi: erc20Abi, functionName: "transfer", args: [guardian, raw] }) }];
       how = `sent $${usd} of USDC`;
     } else {
-      if ((await bal(n.weth)) < wei) throw new Error(`Demo wallet has too little USDC or WETH for $${usd}`);
+      if ((await bal(n.weth)) < wei) throw empty(`$${usd} of USDC or WETH`);
       let best = { fee: 0, out: 0n };
       for (const fee of [500, 3000]) {
         try {

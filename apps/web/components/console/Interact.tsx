@@ -45,7 +45,7 @@ export function SimulatePanel({ dash, busy, run }: Ctl) {
         <button disabled={!!busy} onClick={skipCooldown}>{busy === "sim-skip" ? "Lifting…" : `Skip cooldown (testnet)${cooling ? " · active now" : ""}`}</button>
       </div>
       <p className={s.fine}>On testnet each simulated move also lifts the post-trade cooldown, so back-to-back scenarios get an immediate reaction. Mainnet keeps the full cooldown.</p>
-      {b && <p className={s.fine}>Demo wallet: ${b.wethUsd.toFixed(2)} WETH · {b.usdc.toFixed(2)} USDC. “Down” swaps its WETH to USDC if it has too little USDC.</p>}
+      {b && <p className={s.fine}>Demo wallet: ${b.wethUsd.toFixed(2)} {say("WETH")} · {b.usdc.toFixed(2)} USDC. It swaps between the two when it runs short of one.{b.wethUsd + b.usdc < 10 && <> Running low: send it free test USDC from faucet.circle.com (Base Sepolia) at <span className="hash">{b.address}</span>.</>}</p>}
     </section>
   );
 }
