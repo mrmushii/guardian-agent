@@ -171,12 +171,33 @@
 .card { display: grid; grid-template-columns: 44px 1fr; gap: 12px; align-items: start; padding: 14px; border-radius: var(--radius-md); background: var(--glass); border: 1px solid var(--line); }
 .cardNum { width: 44px; height: 44px; border-radius: 12px; display: grid; place-items: center; font-weight: 800; background: linear-gradient(135deg, var(--accent), var(--accent-2)); color: #fff; }
 .card p { margin: 2px 0 0; color: var(--ink-2); font-size: 0.9rem; }
-.login { min-height: 100vh; display: grid; place-items: center; padding: 24px 16px; }
-.loginCard { width: min(520px, 100%); padding: 36px 30px; display: grid; gap: 18px; justify-items: center; text-align: center; }
-.loginCard h1 { margin: 0; font-size: 2rem; letter-spacing: -0.03em; }
-.loginCard p { margin: 0; color: var(--ink-2); }
-.features { display: grid; gap: 8px; width: 100%; text-align: left; }
-.feature { display: flex; gap: 10px; align-items: center; padding: 10px 12px; border-radius: var(--radius-md); background: var(--glass); border: 1px solid var(--line); font-size: 0.9rem; }
+.login { min-height: 100vh; display: grid; align-items: center; justify-content: center; gap: 48px; padding: 48px 16px;
+  grid-template-columns: minmax(0, 560px); }
+@media (min-width: 960px) { .login { grid-template-columns: minmax(0, 540px) 400px; gap: 72px; } }
+.pitch { display: flex; flex-direction: column; gap: 22px; min-width: 0; }
+.brandRow { display: flex; align-items: center; gap: 10px; font-weight: 750; font-size: 1.05rem; letter-spacing: -0.01em; }
+.pitch h1 { margin: 0; text-wrap: balance; font-size: clamp(2.1rem, 4.6vw, 3rem); line-height: 1.05; letter-spacing: -0.035em; font-weight: 780; }
+.pitchAccent { background: var(--accent-gradient); -webkit-background-clip: text; background-clip: text; color: transparent; }
+.pitchSub { margin: 0; color: var(--ink-2); font-size: 1.05rem; line-height: 1.55; max-width: 46ch; }
+.mixDemo { padding: 16px 18px; border-radius: var(--radius-md); display: grid; gap: 10px; max-width: 440px; }
+.mixHead, .mixFoot { display: flex; justify-content: space-between; align-items: center; font-size: 0.8rem; color: var(--ink-3); }
+.mixHead span { font-weight: 650; color: var(--ink-2); text-transform: uppercase; letter-spacing: 0.08em; font-size: 0.72rem; }
+.mixBar { position: relative; display: flex; height: 34px; border-radius: 10px; overflow: hidden; font-size: 0.78rem; font-weight: 650; }
+.mixBar b, .mixBar i { display: flex; align-items: center; padding: 0 12px; font-style: normal; white-space: nowrap; }
+.mixBar b { background: var(--accent-gradient); color: #fff; animation: mixIn 1.2s var(--ease) both; }
+.mixBar i { flex: 1; background: var(--glass-strong); color: var(--ink-2); justify-content: flex-end; }
+.mixBar u { position: absolute; top: -3px; bottom: -3px; width: 2px; background: var(--ink); opacity: 0.7; }
+@keyframes mixIn { from { width: 52% !important; } }
+.mixOk { display: inline-flex; align-items: center; gap: 4px; color: var(--good); font-weight: 650; }
+.facts { list-style: none; margin: 0; padding: 0; display: grid; gap: 10px; color: var(--ink-2); font-size: 0.95rem; }
+.facts li { display: flex; align-items: center; gap: 10px; }
+.facts svg { flex: none; color: var(--good); }
+.loginCard { width: 100%; padding: 30px 28px; display: grid; gap: 14px; border-radius: var(--radius-lg); }
+.loginCard h2 { margin: 0 0 6px; font-size: 1.3rem; letter-spacing: -0.02em; }
+.loginCard button { width: 100%; padding: 12px 16px; font-size: 0.95rem; }
+.loginCard .fine { margin: 2px 0 0; line-height: 1.5; }
+.or { display: flex; align-items: center; gap: 12px; color: var(--ink-3); font-size: 0.78rem; }
+.or::before, .or::after { content: ""; flex: 1; height: 1px; background: var(--line); }
 .loading { min-height: 100vh; display: grid; place-items: center; gap: 12px; }
 .scroll { max-height: 560px; overflow-y: auto; padding-right: 6px; }
 @media (max-width: 600px) {

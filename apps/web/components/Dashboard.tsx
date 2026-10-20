@@ -201,18 +201,27 @@ function Console() {
 
   if (needsLogin) return (
     <main className={s.login}>
-      <div className={`glass ${s.loginCard}`}>
-        <AgentOrb mode="watching" large />
-        <h1>Guardian Agent</h1>
-        <p>Pick the mix you want. Guardian keeps your WETH and USDC there for you, and it can never trade outside the limits you sign.</p>
-        <div className={s.features}>
-          <div className={s.feature}><Icon name="limits" /> <span>Your wallet enforces your limits, not the AI. Even a tricked agent can't break them.</span></div>
-          <div className={s.feature}><Icon name="agent" /> <span>Ask it anything. It explains every trade in plain words.</span></div>
-          <div className={s.feature}><Icon name="hand" /> <span>Big trades wait for your signature. Pause or switch it off any time.</span></div>
+      <section className={s.pitch}>
+        <div className={s.brandRow}><AgentOrb mode="watching" /><span>Guardian</span></div>
+        <h1>Set your ETH mix once.<br /><span className={s.pitchAccent}>Guardian keeps it there.</span></h1>
+        <p className={s.pitchSub}>When the price moves, Guardian swaps between WETH and USDC to bring you back to your target. Small trades happen on their own. Bigger ones wait for you.</p>
+        <div className={`glass ${s.mixDemo}`} aria-hidden="true">
+          <div className={s.mixHead}><span>Your mix</span><small>example</small></div>
+          <div className={s.mixBar}><b style={{ width: "67%" }}>WETH 67%</b><i>USDC 33%</i><u style={{ left: "67%" }} /></div>
+          <div className={s.mixFoot}><span>Allowed 63–71%</span><span className={s.mixOk}><Icon name="check" size={13} /> In range</span></div>
         </div>
-        <button className="primary" onClick={signIn} disabled={busy === "signin"} style={{ width: "100%" }}>{busy === "signin" ? "Waiting for wallet…" : "Sign in with owner wallet"}</button>
-        <button onClick={sandboxSignIn} disabled={!!busy} style={{ width: "100%", marginTop: 10 }}>{busy === "sandbox" ? "Opening sandbox…" : "Try the live demo (no wallet needed)"}</button>
-        <p className={s.fine}>The demo runs on a real test account. You can watch the agent, chat with it and simulate price moves. Only the owner can change limits.</p>
+        <ul className={s.facts}>
+          <li><Icon name="check" size={16} />It can&apos;t send your money anywhere else.</li>
+          <li><Icon name="check" size={16} />Your wallet enforces the limits, not the AI.</li>
+          <li><Icon name="check" size={16} />You can switch it off with one signature.</li>
+        </ul>
+      </section>
+      <div className={`glass ${s.loginCard}`}>
+        <h2>Get started</h2>
+        <button className="primary" onClick={signIn} disabled={busy === "signin"}>{busy === "signin" ? "Waiting for wallet…" : "Sign in with your wallet"}</button>
+        <div className={s.or}><span>or</span></div>
+        <button onClick={sandboxSignIn} disabled={!!busy}>{busy === "sandbox" ? "Opening the demo…" : "Try the live demo"}</button>
+        <p className={s.fine}>No wallet needed. The demo is a real account on Base Sepolia, a test network. Look around, chat with the agent and simulate a price move.</p>
         {notice && <p className={notice.kind === "err" ? s.toastErr : s.toastOk} role="status">{notice.text}</p>}
       </div>
     </main>
